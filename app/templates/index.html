@@ -1,0 +1,716 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Repo Manager</title>
+    <link href="/static/css/bootstrap.min.css" rel="stylesheet">
+    <script src="/static/js/htmx.min.js"></script>
+    <style>
+        body { background: #f5f6fa; min-height: 100vh; display: flex; flex-direction: column; }
+        .page-main { flex: 1 0 auto; }
+        footer.app-footer { margin-top: auto; }
+        .reach-lamp { position: absolute; top: 10px; right: 10px; width: 12px; height: 12px; border-radius: 50%; background: #adb5bd; box-shadow: 0 0 6px #adb5bd; }
+        .lamp-green { background: #198754; box-shadow: 0 0 8px #198754; }
+        .lamp-red { background: #dc3545; box-shadow: 0 0 8px #dc3545; }
+        .lamp-yellow { background: #ffc107; box-shadow: 0 0 8px #ffc107; }
+        .card { position: relative; }
+        .card-idle { border-color: #dee2e6; }
+        .card-running { border-color: #0d6efd; }
+        .card-success { border-color: #198754; }
+        .card-failed { border-color: #dc3545; }
+        .err-line { cursor: pointer; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+        .status-idle { color: #6c757d; }
+        .status-running { color: #0d6efd; }
+        .status-success { color: #198754; }
+        .status-failed { color: #dc3545; }
+        .badge-deb { background: #a80030; }
+        .badge-rpm { background: #e44d26; }
+        footer.app-footer { margin-top: 2rem; }
+    </style>
+</head>
+<body>
+<div class="page-main">
+<nav class="navbar navbar-dark bg-dark mb-4">
+    <div class="container">
+        <a class="navbar-brand" href="/">Repo Manager</a>
+        <span class="navbar-text text-muted">deb + rpm mirrors</span>
+    </div>
+</nav>
+
+<div class="container">
+    <div class="row mb-3 align-items-center">
+        <div class="col">
+            <h2 class="mb-0">Зеркала</h2>
+        </div>
+        <div class="col-auto d-flex flex-wrap gap-2 justify-content-end">
+            <a class="btn btn-outline-primary btn-sm" href="/api/mirrors/export">Экспорт</a>
+            <input type="file" id="importFile" accept=".txt,.csv" hidden onchange="importMirrors(this)">
+            <button class="btn btn-outline-success btn-sm" onclick="document.getElementById('importFile').click()">Импорт</button>
+            <button class="btn btn-outline-secondary btn-sm" onclick="cleanupAptly()">Очистить deb</button>
+            <button class="btn btn-primary btn-sm" data-bs-toggle="modal" data-bs-target="#addMirrorModal">+ Добавить зеркало</button>
+        </div>
+    </div>
+    <div class="mb-4">
+        <div class="btn-group">
+            <button class="btn btn-outline-secondary btn-sm filter-btn active" data-filter="all">Все</button>
+            <button class="btn btn-outline-secondary btn-sm filter-btn" data-filter="rpm">RPM</button>
+            <button class="btn btn-outline-secondary btn-sm filter-btn" data-filter="deb">DEB</button>
+            <button class="btn btn-outline-secondary btn-sm filter-btn" data-filter="failed">С ошибкой</button>
+        </div>
+    </div>
+
+    <div class="row">
+        {% for m in mirrors %}
+        <div class="col-md-6 col-lg-4 mb-3 mirror-card" data-type="{{ m.type }}" data-status="{{ m.status }}">
+            <div class="card h-100 card-{{ m.status }}" id="card-{{ m.id }}">
+                <span class="reach-lamp" data-id="{{ m.id }}" data-status="{{ m.status }}" title="проверка"></span>
+                <div class="card-body">
+                    <div class="d-flex justify-content-between align-items-start">
+                        <h5 class="card-title mb-1"><a href="/mirrors/{{ m.id }}" class="text-decoration-none">{{ m.name }}</a></h5>
+                        <span class="badge {% if m.type == 'deb' %}badge-deb{% else %}badge-rpm{% endif %}">
+                            {{ m.type | upper }}
+                        </span>
+                    </div>
+                    <p class="card-text text-muted small mb-2">{{ m.description or m.source_url }}</p>
+                    <p class="mb-1">
+                        Статус:
+                        <span class="status-{{ m.status }}" id="status-{{ m.id }}">{{ m.status }}</span>
+                    </p>
+                    <div class="progress mb-2" style="height: 8px;">
+                        <div class="progress-bar" id="bar-{{ m.id }}" style="width: 0%"></div>
+                    </div>
+                    <p class="small text-muted mb-2" id="progress-{{ m.id }}"></p>
+                    {% if m.schedule %}
+                    <p class="small text-muted mb-2">Расписание: <span class="cron-human" data-cron="{{ m.schedule }}">{{ m.schedule }}</span></p>
+                    {% endif %}
+                    {% if m.last_sync %}
+                    <p class="small text-muted mb-2">
+                        Последняя синхронизация: {{ m.last_sync.strftime('%Y-%m-%d %H:%M') }}
+                    </p>
+                    {% endif %}
+                    {% if m.last_error %}
+                    <div class="alert alert-danger py-1 px-2 small err-line" title="Нажми, чтобы раскрыть" onclick="this.classList.toggle('text-wrap'); this.style.whiteSpace = this.style.whiteSpace ? '' : 'normal';">{{ m.last_error }}</div>
+                    {% endif %}
+                    <div class="d-flex flex-wrap gap-2">
+                        <button class="btn btn-sm btn-outline-primary sync-btn" data-id="{{ m.id }}" onclick="syncMirror({{ m.id }})" {% if m.status == 'running' %}style="display:none"{% endif %}>Sync</button>
+                        <button class="btn btn-sm btn-outline-warning stop-btn" data-id="{{ m.id }}" onclick="stopMirror({{ m.id }})" {% if m.status != 'running' %}style="display:none"{% endif %}>Стоп</button>
+                        <a class="btn btn-sm btn-outline-secondary" href="/mirrors/{{ m.id }}">Открыть</a>
+                        <button class="btn btn-sm btn-outline-danger" onclick="deleteMirror({{ m.id }}, '{{ m.name }}', false)">Удалить</button>
+                        <button class="btn btn-sm btn-danger" onclick="deleteMirror({{ m.id }}, '{{ m.name }}', true)">Удалить с файлами</button>
+                    </div>
+                </div>
+            </div>
+        </div>
+        {% else %}
+        <div class="col-12">
+            <div class="alert alert-info">Зеркал пока нет. Добавьте первое.</div>
+        </div>
+        {% endfor %}
+    </div>
+
+    <hr class="my-5">
+
+    <div class="row mb-4">
+        <div class="col">
+            <h2>Локальные репозитории (свои пакеты)</h2>
+        </div>
+        <div class="col-auto">
+            <button class="btn btn-success" data-bs-toggle="modal" data-bs-target="#addLocalRepoModal">
+                + Создать локальный репо
+            </button>
+        </div>
+    </div>
+
+    <div class="row">
+        {% for r in local_repos %}
+        <div class="col-md-6 col-lg-4 mb-3">
+            <div class="card h-100">
+                <div class="card-body">
+                    <div class="d-flex justify-content-between">
+                        <h5 class="card-title">{{ r.name }}</h5>
+                        <span class="badge {% if r.type == 'deb' %}badge-deb{% else %}badge-rpm{% endif %}">
+                            {{ r.type | upper }}
+                        </span>
+                    </div>
+                    <p class="text-muted small">{{ r.description or r.local_path }}</p>
+                    <div class="d-flex flex-wrap gap-2">
+                        <input type="file" id="up-{{ r.id }}" accept=".rpm,.deb" hidden onchange="uploadPkg({{ r.id }}, this)">
+                        <button class="btn btn-sm btn-outline-primary" onclick="document.getElementById('up-{{ r.id }}').click()">Загрузить пакет</button>
+                        <button class="btn btn-sm btn-outline-secondary"
+                                onclick="showContents({{ r.id }}, '{{ r.name }}', 'local')">
+                            Содержимое
+                        </button>
+                        <button class="btn btn-sm btn-outline-danger"
+                                onclick="deleteLocal({{ r.id }}, '{{ r.name }}', false)">
+                            Удалить
+                        </button>
+                        <button class="btn btn-sm btn-danger"
+                                onclick="deleteLocal({{ r.id }}, '{{ r.name }}', true)">
+                            Удалить с файлами
+                        </button>
+                    </div>
+                </div>
+            </div>
+        </div>
+        {% else %}
+        <div class="col-12">
+            <div class="alert alert-secondary">Локальных репозиториев пока нет.</div>
+        </div>
+        {% endfor %}
+    </div>
+</div>
+
+<div class="container mb-4">
+    <div class="card">
+        <div class="card-body">
+            <h5 class="card-title">Выход в интернет</h5>
+            <p class="small text-muted">Пустой прокси — синхронизация напрямую. Заполненный используется только для sync.</p>
+            <div class="row g-2 align-items-end">
+                <div class="col-md-6">
+                    <label class="form-label mb-1">Прокси</label>
+                    <input id="proxyUrl" class="form-control form-control-sm" placeholder="http://user:pass@proxy:3128">
+                </div>
+                <div class="col-md-4">
+                    <label class="form-label mb-1">Не проксировать</label>
+                    <input id="noProxy" class="form-control form-control-sm" placeholder="127.0.0.1,localhost">
+                </div>
+                <div class="col-md-2">
+                    <button class="btn btn-sm btn-outline-secondary w-100" onclick="saveProxy()">Сохранить</button>
+                </div>
+            </div>
+        </div>
+    </div>
+</div>
+</div>
+
+<footer class="app-footer bg-dark text-light">
+    <div class="container d-flex justify-content-between py-3">
+        <span>Локальный менеджер репозиториев</span>
+        <span id="diskInfo">диск: …</span>
+    </div>
+</footer>
+
+<div class="modal fade" id="editMirrorModal" tabindex="-1">
+    <div class="modal-dialog">
+        <div class="modal-content">
+            <form id="editMirrorForm">
+                <div class="modal-header">
+                    <h5 class="modal-title">Настройки зеркала</h5>
+                    <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
+                </div>
+                <div class="modal-body">
+                    <input type="hidden" name="id" id="editId">
+                    <div class="mb-3">
+                        <label class="form-label">Имя</label>
+                        <input class="form-control" id="editName" disabled>
+                    </div>
+                    <div class="mb-3">
+                        <label class="form-label">URL источника</label>
+                        <input class="form-control" name="source_url" id="editUrl" required>
+                    </div>
+                    <div class="mb-3">
+                        <label class="form-label">Distribution</label>
+                        <input class="form-control" name="distribution" id="editDistribution">
+                    </div>
+                    <div class="mb-3">
+                        <label class="form-label">Components</label>
+                        <input class="form-control" name="components" id="editComponents">
+                    </div>
+                    <div class="mb-3">
+                        <label class="form-label">Architectures</label>
+                        <input class="form-control" name="architectures" id="editArch">
+                    </div>
+                    <div class="mb-3">
+                        <label class="form-label">Repoid</label>
+                        <input class="form-control" name="repoid" id="editRepoid">
+                    </div>
+                    <div class="mb-3">
+                        <label class="form-label">Cron</label>
+                        <input class="form-control" name="schedule" id="editSchedule" placeholder="0 3 * * *">
+                    </div>
+                    <div class="mb-3">
+                        <label class="form-label">Описание</label>
+                        <textarea class="form-control" name="description" id="editDescription" rows="2"></textarea>
+                    </div>
+                    <div class="form-check">
+                        <input class="form-check-input" type="checkbox" id="editEnabled">
+                        <label class="form-check-label" for="editEnabled">Включено</label>
+                    </div>
+                </div>
+                <div class="modal-footer">
+                    <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Отмена</button>
+                    <button type="submit" class="btn btn-primary">Сохранить</button>
+                </div>
+            </form>
+        </div>
+    </div>
+</div>
+
+<!-- Modal: Add Mirror -->
+<div class="modal fade" id="addMirrorModal" tabindex="-1">
+    <div class="modal-dialog">
+        <div class="modal-content">
+            <form id="addMirrorForm">
+                <div class="modal-header">
+                    <h5 class="modal-title">Новое зеркало</h5>
+                    <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
+                </div>
+                <div class="modal-body">
+                    <div class="mb-3">
+                        <label class="form-label">Имя</label>
+                        <input type="text" class="form-control" name="name" required>
+                    </div>
+                    <div class="mb-3">
+                        <label class="form-label">Тип</label>
+                        <select class="form-select" name="type" id="mirrorType">
+                            <option value="rpm">RPM</option>
+                            <option value="deb">DEB</option>
+                        </select>
+                    </div>
+                    <div class="mb-3">
+                        <label class="form-label">URL источника</label>
+                        <input type="url" class="form-control" name="source_url" required
+                               placeholder="https://...">
+                    </div>
+                    <div class="mb-3 deb-only" style="display:none;">
+                        <label class="form-label">Distribution (jammy, bookworm...)</label>
+                        <input type="text" class="form-control" name="distribution">
+                    </div>
+                    <div class="mb-3 deb-only" style="display:none;">
+                        <label class="form-label">Components (main,universe)</label>
+                        <input type="text" class="form-control" name="components" value="main">
+                    </div>
+                    <div class="mb-3">
+                        <label class="form-label">Architectures</label>
+                        <input type="text" class="form-control" name="architectures" value="x86_64">
+                    </div>
+                    <div class="mb-3 rpm-only">
+                        <label class="form-label">Repoid (для reposync, опционально)</label>
+                        <input type="text" class="form-control" name="repoid">
+                    </div>
+                    <div class="mb-3">
+                        <label class="form-label">Cron-расписание (опционально)</label>
+                        <input type="text" class="form-control" name="schedule" placeholder="0 3 * * *">
+                    </div>
+                    <div class="mb-3">
+                        <label class="form-label">Описание</label>
+                        <textarea class="form-control" name="description" rows="2"></textarea>
+                    </div>
+                </div>
+                <div class="modal-footer">
+                    <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Отмена</button>
+                    <button type="submit" class="btn btn-primary">Создать</button>
+                </div>
+            </form>
+        </div>
+    </div>
+</div>
+
+<!-- Modal: Add Local Repo -->
+<div class="modal fade" id="addLocalRepoModal" tabindex="-1">
+    <div class="modal-dialog">
+        <div class="modal-content">
+            <form id="addLocalRepoForm">
+                <div class="modal-header">
+                    <h5 class="modal-title">Новый локальный репозиторий</h5>
+                    <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
+                </div>
+                <div class="modal-body">
+                    <div class="mb-3">
+                        <label class="form-label">Имя</label>
+                        <input type="text" class="form-control" name="name" required>
+                    </div>
+                    <div class="mb-3">
+                        <label class="form-label">Тип</label>
+                        <select class="form-select" name="type">
+                            <option value="rpm">RPM</option>
+                            <option value="deb">DEB</option>
+                        </select>
+                    </div>
+                    <div class="mb-3">
+                        <label class="form-label">Distribution (для deb)</label>
+                        <input type="text" class="form-control" name="distribution">
+                    </div>
+                    <div class="mb-3">
+                        <label class="form-label">Описание</label>
+                        <textarea class="form-control" name="description" rows="2"></textarea>
+                    </div>
+                </div>
+                <div class="modal-footer">
+                    <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Отмена</button>
+                    <button type="submit" class="btn btn-success">Создать</button>
+                </div>
+            </form>
+        </div>
+    </div>
+</div>
+
+</div>
+
+<div class="modal fade" id="contentsModal" tabindex="-1">
+    <div class="modal-dialog modal-lg">
+        <div class="modal-content">
+            <div class="modal-header">
+                <h5 class="modal-title" id="contentsTitle">Содержимое</h5>
+                <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
+            </div>
+            <div class="modal-body">
+                <input id="contentsQuery" class="form-control mb-2" placeholder="поиск по имени пакета">
+                <div id="contentsMeta" class="small text-muted mb-2"></div>
+                <div id="contentsList" style="max-height: 420px; overflow: auto;"></div>
+                <div class="d-flex justify-content-between align-items-center mt-2">
+                    <button class="btn btn-sm btn-outline-secondary" id="prevPage" type="button">Назад</button>
+                    <span id="pageInfo" class="small text-muted"></span>
+                    <button class="btn btn-sm btn-outline-secondary" id="nextPage" type="button">Дальше</button>
+                </div>
+            </div>
+        </div>
+    </div>
+</div>
+
+<script src="/static/js/bootstrap.bundle.min.js"></script>
+<script>
+function fmtGb(n) {
+    return (n / 1024 / 1024 / 1024).toFixed(1) + ' ГБ';
+}
+fetch('/api/proxy').then(r => r.json()).then(d => {
+    document.getElementById('proxyUrl').value = d.proxy_url || '';
+    document.getElementById('noProxy').value = d.no_proxy || '';
+});
+
+async function saveProxy() {
+    const res = await fetch('/api/proxy', {
+        method: 'PUT',
+        headers: {'Content-Type': 'application/json'},
+        body: JSON.stringify({
+            proxy_url: document.getElementById('proxyUrl').value,
+            no_proxy: document.getElementById('noProxy').value
+        })
+    });
+    if (!res.ok) {
+        alert('Не удалось сохранить прокси');
+        return;
+    }
+    alert('Прокси сохранён. Будет использован при следующем sync.');
+}
+
+fetch('/api/disk').then(r => r.json()).then(d => {
+    document.getElementById('diskInfo').textContent =
+        'диск ' + fmtGb(d.used_bytes) + ' занято, ' + fmtGb(d.free_bytes) + ' свободно из ' + fmtGb(d.total_bytes);
+}).catch(() => {
+    document.getElementById('diskInfo').textContent = 'диск: нет данных';
+});
+
+function humanCron(expr) {
+    const p = (expr || '').trim().split(/\s+/);
+    if (p.length < 5) return expr;
+    const [min, hour, dom, mon, dow] = p;
+    const hh = hour.padStart(2, '0');
+    const mm = min.padStart(2, '0');
+    const days = {0:'вс',1:'пн',2:'вт',3:'ср',4:'чт',5:'пт',6:'сб',7:'вс'};
+    if (min.startsWith('*/')) return 'каждые ' + min.slice(2) + ' мин';
+    if (dom === '*' && mon === '*' && dow === '*') return 'каждый день в ' + hh + ':' + mm;
+    if (dom === '*' && mon === '*' && dow !== '*') return 'по ' + (days[dow] || dow) + ' в ' + hh + ':' + mm;
+    return expr;
+}
+document.querySelectorAll('.cron-human').forEach(el => {
+    el.textContent = humanCron(el.dataset.cron);
+});
+
+async function uploadPkg(repoId, input) {
+    const file = input.files[0];
+    if (!file) return;
+    const body = new FormData();
+    body.append('file', file);
+    const res = await fetch('/api/local-repos/' + repoId + '/packages', {method: 'POST', body});
+    const data = await res.json().catch(() => ({}));
+    if (!res.ok) {
+        alert('Ошибка загрузки: ' + (data.detail || res.status));
+        return;
+    }
+    alert('Пакет добавлен: ' + file.name);
+    input.value = '';
+}
+
+async function importMirrors(input) {
+    const file = input.files[0];
+    if (!file) return;
+    const body = new FormData();
+    body.append('file', file);
+    const res = await fetch('/api/mirrors/import', {method: 'POST', body});
+    const data = await res.json().catch(() => ({}));
+    if (!res.ok) { alert(data.detail || res.status); return; }
+    alert('Создано: ' + (data.created || []).join(', ') + '\nОшибки: ' + (data.errors || []).join('\n'));
+    location.reload();
+}
+
+async function cleanupAptly() {
+    if (!confirm('Удалить пакеты aptly, на которые не ссылается ни одно зеркало?')) return;
+    const res = await fetch('/api/mirrors/cleanup-aptly', {method: 'POST'});
+    const data = await res.json().catch(() => ({}));
+    if (!res.ok) { alert(data.detail || res.status); return; }
+    alert('Готово');
+}
+document.querySelectorAll('.reach-lamp').forEach(async el => {
+    if (el.dataset.status === 'running') {
+        el.className = 'reach-lamp lamp-yellow';
+        el.title = 'синхронизируется';
+        return;
+    }
+    const res = await fetch('/api/mirrors/' + el.dataset.id + '/client-check');
+    const data = await res.json().catch(() => ({ok: false}));
+    el.className = 'reach-lamp ' + (data.ok ? 'lamp-green' : 'lamp-red');
+    el.title = data.ok ? 'nginx отдаёт репозиторий' : 'nginx не отдаёт: ' + (data.http_code || data.error || '');
+});
+
+document.querySelectorAll('.filter-btn').forEach(btn => {
+    btn.addEventListener('click', () => {
+        document.querySelectorAll('.filter-btn').forEach(b => b.classList.remove('active'));
+        btn.classList.add('active');
+        const filter = btn.dataset.filter;
+        document.querySelectorAll('.mirror-card').forEach(card => {
+            const ok = filter === 'all'
+                || card.dataset.type === filter
+                || (filter === 'failed' && card.dataset.status === 'failed');
+            card.style.display = ok ? '' : 'none';
+        });
+    });
+});
+
+async function pollProgress() {
+    const nodes = document.querySelectorAll('[id^="status-"]');
+    for (const node of nodes) {
+        const id = node.id.replace('status-', '');
+        if (node.textContent.trim() !== 'running' && !node.dataset.live) continue;
+        const res = await fetch('/api/sync/' + id + '/progress');
+        if (!res.ok) continue;
+        const data = await res.json();
+        node.textContent = data.status;
+        node.className = 'status-' + data.status;
+        const card = document.getElementById('card-' + id);
+        if (card) {
+            card.className = 'card h-100 card-' + data.status;
+            card.parentElement.dataset.status = data.status;
+        }
+        const syncBtn = card && card.querySelector('.sync-btn');
+        const stopBtn = card && card.querySelector('.stop-btn');
+        if (syncBtn) syncBtn.style.display = data.status === 'running' ? 'none' : '';
+        if (stopBtn) stopBtn.style.display = data.status === 'running' ? '' : 'none';
+        const lamp = card && card.querySelector('.reach-lamp');
+        if (lamp && data.status === 'running') {
+            lamp.className = 'reach-lamp lamp-yellow';
+            lamp.title = 'синхронизируется';
+        }
+        node.dataset.live = data.status === 'running' ? '1' : '';
+        const bar = document.getElementById('bar-' + id);
+        const label = document.getElementById('progress-' + id);
+        const gb = (data.size_bytes / 1024 / 1024 / 1024).toFixed(2);
+        if (data.percent !== null && data.percent !== undefined) {
+            bar.style.width = data.percent + '%';
+            label.textContent = data.percent + '% · ' + data.files + ' пакетов · ' + gb + ' ГБ';
+        } else if (data.status === 'running') {
+            bar.style.width = '100%';
+            bar.classList.add('progress-bar-striped', 'progress-bar-animated');
+            label.textContent = 'идёт синхронизация · ' + data.files + ' пакетов · ' + gb + ' ГБ';
+        } else {
+            bar.style.width = data.status === 'success' ? '100%' : '0%';
+            bar.classList.remove('progress-bar-animated');
+            label.textContent = data.files + ' пакетов · ' + gb + ' ГБ';
+        }
+    }
+}
+setInterval(pollProgress, 5000);
+pollProgress();
+
+let contentsMirrorId = null;
+let contentsKind = 'mirror';
+let contentsOffset = 0;
+const pageSize = 50;
+
+async function editMirror(id) {
+    const res = await fetch('/api/mirrors/' + id);
+    const m = await res.json();
+    document.getElementById('editId').value = m.id;
+    document.getElementById('editName').value = m.name;
+    document.getElementById('editUrl').value = m.source_url || '';
+    document.getElementById('editDistribution').value = m.distribution || '';
+    document.getElementById('editComponents').value = m.components || '';
+    document.getElementById('editArch').value = m.architectures || '';
+    document.getElementById('editRepoid').value = m.repoid || '';
+    document.getElementById('editSchedule').value = m.schedule || '';
+    document.getElementById('editDescription').value = m.description || '';
+    document.getElementById('editEnabled').checked = !!m.enabled;
+    new bootstrap.Modal(document.getElementById('editMirrorModal')).show();
+}
+
+document.getElementById('editMirrorForm').addEventListener('submit', async (e) => {
+    e.preventDefault();
+    const id = document.getElementById('editId').value;
+    const data = {
+        source_url: document.getElementById('editUrl').value,
+        distribution: document.getElementById('editDistribution').value,
+        components: document.getElementById('editComponents').value,
+        architectures: document.getElementById('editArch').value,
+        repoid: document.getElementById('editRepoid').value,
+        schedule: document.getElementById('editSchedule').value,
+        description: document.getElementById('editDescription').value,
+        enabled: document.getElementById('editEnabled').checked
+    };
+    const res = await fetch('/api/mirrors/' + id, {
+        method: 'PATCH',
+        headers: {'Content-Type': 'application/json'},
+        body: JSON.stringify(data)
+    });
+    if (!res.ok) {
+        const err = await res.json().catch(() => ({}));
+        alert('Ошибка: ' + (err.detail || res.status));
+        return;
+    }
+    location.reload();
+});
+
+async function syncMirror(id) {
+    const res = await fetch('/api/sync/' + id, {method: 'POST'});
+    const data = await res.json().catch(() => ({}));
+    if (!res.ok) {
+        alert('Ошибка: ' + (data.detail || res.status));
+        return;
+    }
+    alert('Синхронизация запущена');
+    setTimeout(() => location.reload(), 800);
+}
+
+async function stopMirror(id) {
+    const res = await fetch('/api/sync/' + id + '/stop', {method: 'POST'});
+    const data = await res.json().catch(() => ({}));
+    if (!res.ok) {
+        alert('Ошибка: ' + (data.detail || res.status));
+        return;
+    }
+    alert('Синхронизация остановлена');
+    setTimeout(() => location.reload(), 800);
+}
+
+async function deleteMirror(id, name, withFiles) {
+    const msg = withFiles
+        ? 'Удалить зеркало «' + name + '» вместе с файлами на диске?'
+        : 'Удалить зеркало «' + name + '» только из базы? Файлы останутся.';
+    if (!confirm(msg)) return;
+    const res = await fetch('/api/mirrors/' + id + '?delete_files=' + (withFiles ? 'true' : 'false'), {method: 'DELETE'});
+    if (res.status === 204) {
+        location.reload();
+        return;
+    }
+    const data = await res.json().catch(() => ({}));
+    alert('Ошибка: ' + (data.detail || res.status));
+}
+
+async function deleteLocal(id, name, withFiles) {
+    const msg = withFiles
+        ? 'Удалить локальный репозиторий «' + name + '» вместе с файлами?'
+        : 'Удалить локальный репозиторий «' + name + '» только из базы?';
+    if (!confirm(msg)) return;
+    const res = await fetch('/api/local-repos/' + id + '?delete_files=' + (withFiles ? 'true' : 'false'), {method: 'DELETE'});
+    if (res.status === 204) {
+        location.reload();
+        return;
+    }
+    const data = await res.json().catch(() => ({}));
+    alert('Ошибка: ' + (data.detail || res.status));
+}
+
+async function loadContents() {
+    const q = document.getElementById('contentsQuery').value || '';
+    const base = contentsKind === 'local'
+        ? '/api/local-repos/' + contentsMirrorId + '/contents'
+        : '/api/mirrors/' + contentsMirrorId + '/contents';
+    const res = await fetch(base + '?limit=' + pageSize + '&offset=' + contentsOffset + '&q=' + encodeURIComponent(q));
+    const data = await res.json();
+    const mb = (data.size_bytes || 0) / 1024 / 1024;
+    const total = data.total || 0;
+    const from = total ? data.offset + 1 : 0;
+    const to = Math.min(data.offset + (data.packages || []).length, total);
+    document.getElementById('contentsMeta').textContent =
+        'Всего ' + total + ', размер ' + mb.toFixed(1) + ' МБ';
+    document.getElementById('pageInfo').textContent = from + '–' + to + ' из ' + total;
+    document.getElementById('prevPage').disabled = contentsOffset <= 0;
+    document.getElementById('nextPage').disabled = contentsOffset + pageSize >= total;
+    const list = document.getElementById('contentsList');
+    list.innerHTML = (data.packages || []).map(p =>
+        '<div class="border-bottom py-1"><code>' + p.name + '</code> <span class="text-muted small">' +
+        (p.size_bytes / 1024 / 1024).toFixed(2) + ' МБ</span></div>'
+    ).join('') || '<div class="text-muted">Пакетов не найдено</div>';
+}
+
+function showContents(id, name, kind) {
+    contentsMirrorId = id;
+    contentsKind = kind || 'mirror';
+    contentsOffset = 0;
+    document.getElementById('contentsTitle').textContent = 'Содержимое: ' + name;
+    document.getElementById('contentsQuery').value = '';
+    const modal = new bootstrap.Modal(document.getElementById('contentsModal'));
+    modal.show();
+    loadContents();
+}
+
+document.getElementById('contentsQuery').addEventListener('input', () => {
+    clearTimeout(window._cq);
+    window._cq = setTimeout(() => { contentsOffset = 0; loadContents(); }, 300);
+});
+document.getElementById('prevPage').addEventListener('click', () => {
+    contentsOffset = Math.max(0, contentsOffset - pageSize);
+    loadContents();
+});
+document.getElementById('nextPage').addEventListener('click', () => {
+    contentsOffset += pageSize;
+    loadContents();
+});
+
+document.getElementById('mirrorType').addEventListener('change', function() {
+    const isDeb = this.value === 'deb';
+    document.querySelectorAll('.deb-only').forEach(el => el.style.display = isDeb ? 'block' : 'none');
+    document.querySelectorAll('.rpm-only').forEach(el => el.style.display = isDeb ? 'none' : 'block');
+});
+
+document.getElementById('addMirrorForm').addEventListener('submit', async (e) => {
+    e.preventDefault();
+    const form = e.target;
+    const data = Object.fromEntries(new FormData(form));
+    data.enabled = true;
+    
+    const res = await fetch('/api/mirrors/', {
+        method: 'POST',
+        headers: {'Content-Type': 'application/json'},
+        body: JSON.stringify(data)
+    });
+    
+    if (res.ok) {
+        location.reload();
+    } else {
+        const err = await res.json();
+        alert('Ошибка: ' + (err.detail || JSON.stringify(err)));
+    }
+});
+
+document.getElementById('addLocalRepoForm').addEventListener('submit', async (e) => {
+    e.preventDefault();
+    const form = e.target;
+    const data = Object.fromEntries(new FormData(form));
+    
+    const res = await fetch('/api/local-repos/', {
+        method: 'POST',
+        headers: {'Content-Type': 'application/json'},
+        body: JSON.stringify(data)
+    });
+    
+    if (res.ok) {
+        location.reload();
+    } else {
+        const err = await res.json();
+        alert('Ошибка: ' + (err.detail || JSON.stringify(err)));
+    }
+});
+</script>
+</body>
+</html>
