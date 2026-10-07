@@ -61,6 +61,7 @@ class RpmService:
         cmd = [
             "dnf", "reposync",
             "--download-metadata",
+            "--exclude=*.src.rpm",
             "-p", str(dest.parent),
         ]
         if newest_only:

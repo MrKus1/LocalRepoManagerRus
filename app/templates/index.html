@@ -28,16 +28,49 @@
         .badge-deb { background: #a80030; }
         .badge-rpm { background: #e44d26; }
         footer.app-footer { margin-top: 2rem; }
+        .side-menu { position: fixed; top: 0; left: 0; height: 100vh; width: 360px; background: #eef1f4; color: #212529; z-index: 1040; transform: translateX(-100%); transition: transform .2s ease; overflow: auto; padding: 1rem; border-right: 1px solid #ced4da; }
+        .side-menu.open { transform: translateX(0); }
+        .side-backdrop { position: fixed; inset: 0; background: rgba(0,0,0,.25); z-index: 1030; display: none; }
+        .side-backdrop.show { display: block; }
+        .side-menu a, .side-menu .menu-item { display: block; color: #212529; text-decoration: none; padding: .7rem 0; border-bottom: 1px solid #ced4da; cursor: pointer; }
+        .menu-link { display: inline-block; width: 32px; height: 28px; cursor: pointer; }
+        .menu-link i { display: block; height: 2px; margin: 6px 0; background: #343a40; }
     </style>
 </head>
 <body>
 <div class="page-main">
-<nav class="navbar navbar-dark bg-dark mb-4">
+<nav class="navbar border-bottom mb-4" style="background:#e7ebef">
     <div class="container">
-        <a class="navbar-brand" href="/">Repo Manager</a>
+        <span class="menu-link" onclick="toggleMenu()" title="Меню"><i></i><i></i><i></i></span>
+        <a class="navbar-brand mb-0" href="/">Менеджер репозиториев</a>
         <span class="navbar-text" id="diskInfo">диск: …</span>
     </div>
 </nav>
+<div class="side-backdrop" id="sideBackdrop" onclick="toggleMenu()"></div>
+<aside class="side-menu" id="sideMenu">
+    <div class="d-flex justify-content-between align-items-center mb-3">
+        <strong>Меню</strong>
+        <span class="menu-link" onclick="toggleMenu()">←</span>
+    </div>
+    <a href="/">Зеркала</a>
+    <div class="menu-item" onclick="document.getElementById('settingsBox').classList.toggle('d-none')">Настройки</div>
+    <div id="settingsBox" class="pt-3">
+        <label class="form-label mb-1">Прокси</label>
+        <input id="proxyUrl" class="form-control form-control-sm mb-2" placeholder="http://user:pass@proxy:3128">
+        <label class="form-label mb-1">Не проксировать</label>
+        <input id="noProxy" class="form-control form-control-sm mb-2" placeholder="127.0.0.1,localhost">
+        <button class="btn btn-sm btn-outline-secondary" type="button" onclick="saveProxy()">Сохранить прокси</button>
+    </div>
+    <div class="mt-3">
+        <label class="form-label mb-1">Минимум свободно, ГБ</label>
+        <div class="input-group input-group-sm">
+            <input id="minFree" class="form-control" placeholder="пусто = без лимита">
+            <button class="btn btn-outline-secondary" type="button" onclick="saveMinFree()">Сохранить</button>
+        </div>
+        <p class="small text-muted mt-2 mb-0">Пустой порог — без ограничения. Новый sync не стартует, если свободно меньше этого значения.</p>
+    </div>
+    </div>
+</aside>
 
 <div class="container">
     <div class="row mb-3 align-items-center">
@@ -55,10 +88,10 @@
     </div>
     <div class="mb-4 d-flex align-items-center">
         <div class="btn-group">
-            <button class="btn btn-outline-secondary btn-sm filter-btn active" data-filter="all">Все</button>
-            <button class="btn btn-outline-secondary btn-sm filter-btn" data-filter="rpm">RPM</button>
-            <button class="btn btn-outline-secondary btn-sm filter-btn" data-filter="deb">DEB</button>
-            <button class="btn btn-outline-secondary btn-sm filter-btn" data-filter="failed">С ошибкой</button>
+            <button class="btn btn-primary btn-sm filter-btn active" data-filter="all">Все</button>
+            <button class="btn btn-outline-primary btn-sm filter-btn" data-filter="rpm">RPM</button>
+            <button class="btn btn-outline-primary btn-sm filter-btn" data-filter="deb">DEB</button>
+            <button class="btn btn-outline-primary btn-sm filter-btn" data-filter="failed">С ошибкой</button>
         </div>
         <input id="mirrorSearch" class="form-control form-control-sm ms-2" style="width: 220px" placeholder="поиск по имени">
     </div>
@@ -75,15 +108,8 @@
                             {{ m.type | upper }}
                         </span>
                     </div>
-                    <p class="card-text text-muted small mb-2 text-truncate">{{ m.description or m.distribution or '' }}</p>
-                    <p class="mb-1">
-                        Статус:
-                        <span class="status-{{ m.status }}" id="status-{{ m.id }}">{{ m.status }}</span>
-                    </p>
-                    <p class="small text-muted mb-2">nginx: <span id="lamp-label-{{ m.id }}">проверка</span></p>
-                    <div class="progress mb-2" style="height: 8px;">
-                        <div class="progress-bar" id="bar-{{ m.id }}" style="width: 0%"></div>
-                    </div>
+                    <p class="card-text text-muted small mb-1 text-truncate">{{ m.description or m.distribution or '' }}</p>
+                    <p class="mb-1">Статус: <span class="status-{{ m.status }}" id="status-{{ m.id }}">{{ m.status }}</span></p>
                     <p class="small text-muted mb-2" id="progress-{{ m.id }}">{% if m.size_bytes %}{{ (m.size_bytes / 1024 / 1024 / 1024)|round(2) }} ГБ{% else %}размер появится во время sync{% endif %}</p>
                     {% if m.schedule %}
                     <p class="small text-muted mb-2">Расписание: <span class="cron-human" data-cron="{{ m.schedule }}">{{ m.schedule }}</span></p>
@@ -152,40 +178,19 @@
         </div>
         {% else %}
         <div class="col-12">
-            <div class="alert alert-secondary">Локальных репозиториев пока нет.</div>
+            <div class="alert alert-info d-flex justify-content-between align-items-center">
+                <span>Локальных репозиториев пока нет.</span>
+                <button class="btn btn-success btn-sm" data-bs-toggle="modal" data-bs-target="#addLocalRepoModal">Создать</button>
+            </div>
         </div>
         {% endfor %}
     </div>
 </div>
 
-<div class="container mb-4">
-    <div class="card">
-        <div class="card-body">
-            <h5 class="card-title">Выход в интернет</h5>
-            <p class="small text-muted">Пустой прокси — синхронизация напрямую. Заполненный используется только для sync.</p>
-            <div class="row g-2 align-items-end">
-                <div class="col-md-6">
-                    <label class="form-label mb-1">Прокси</label>
-                    <input id="proxyUrl" class="form-control form-control-sm" placeholder="http://user:pass@proxy:3128">
-                </div>
-                <div class="col-md-4">
-                    <label class="form-label mb-1">Не проксировать</label>
-                    <input id="noProxy" class="form-control form-control-sm" placeholder="127.0.0.1,localhost">
-                </div>
-                <div class="col-md-2">
-                    <label class="form-label mb-1">Мин. свободно, ГБ</label>
-                    <input id="minFree" class="form-control form-control-sm" placeholder="пусто = без лимита">
-                </div>
-                <div class="col-md-2">
-                    <button class="btn btn-sm btn-outline-secondary w-100" onclick="saveProxy()">Сохранить</button>
-                </div>
-            </div>
-        </div>
-    </div>
 </div>
 </div>
 
-<footer class="app-footer bg-dark text-light">
+<footer class="app-footer border-top text-secondary" style="background:#e7ebef">
     <div class="container py-3">Локальный менеджер репозиториев</div>
 </footer>
 
@@ -367,11 +372,22 @@
     </div>
 </div>
 
+<script>
+function toggleMenu() {
+    document.getElementById('sideMenu').classList.toggle('open');
+    document.getElementById('sideBackdrop').classList.toggle('show');
+}
+</script>
 <script src="/static/js/bootstrap.bundle.min.js"></script>
 <script>
 function fmtGb(n) {
     return (n / 1024 / 1024 / 1024).toFixed(1) + ' ГБ';
 }
+function toggleMenu() {
+    document.getElementById('sideMenu').classList.toggle('open');
+    document.getElementById('sideBackdrop').classList.toggle('show');
+}
+
 fetch('/api/proxy').then(r => r.json()).then(d => {
     document.getElementById('proxyUrl').value = d.proxy_url || '';
     document.getElementById('noProxy').value = d.no_proxy || '';
@@ -390,16 +406,18 @@ async function saveProxy() {
             no_proxy: document.getElementById('noProxy').value
         })
     });
-    const res2 = await fetch('/api/min-free', {
+    if (!res.ok) { alert('Не удалось сохранить прокси'); return; }
+    alert('Прокси сохранён');
+}
+
+async function saveMinFree() {
+    const res = await fetch('/api/min-free', {
         method: 'PUT',
         headers: {'Content-Type': 'application/json'},
         body: JSON.stringify({min_free_gb: document.getElementById('minFree').value})
     });
-    if (!res.ok || !res2.ok) {
-        alert('Не удалось сохранить');
-        return;
-    }
-    alert('Сохранено. Порог действует на следующий sync.');
+    if (!res.ok) { alert('Не удалось сохранить порог'); return; }
+    alert('Порог сохранён');
 }
 
 fetch('/api/disk').then(r => r.json()).then(d => {
@@ -482,13 +500,15 @@ document.getElementById('mirrorSearch').addEventListener('input', (e) => {
 
 document.querySelectorAll('.filter-btn').forEach(btn => {
     btn.addEventListener('click', () => {
-        document.querySelectorAll('.filter-btn').forEach(b => b.classList.remove('active'));
-        btn.classList.add('active');
+        document.querySelectorAll('.filter-btn').forEach(b => {
+            b.classList.remove('active', 'btn-primary');
+            b.classList.add('btn-outline-primary');
+        });
+        btn.classList.add('active', 'btn-primary');
+        btn.classList.remove('btn-outline-primary');
         const filter = btn.dataset.filter;
         document.querySelectorAll('.mirror-card').forEach(card => {
-            const ok = filter === 'all'
-                || card.dataset.type === filter
-                || (filter === 'failed' && card.dataset.status === 'failed');
+            const ok = filter === 'all' || card.dataset.type === filter || (filter === 'failed' && card.dataset.status === 'failed');
             card.style.display = ok ? '' : 'none';
         });
     });

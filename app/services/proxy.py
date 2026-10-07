@@ -47,10 +47,17 @@ def load_proxy() -> dict:
 
 
 def save_proxy(proxy_url: str, no_proxy: str) -> dict:
+    data = {}
+    if SETTINGS_FILE.exists():
+        try:
+            data = json.loads(SETTINGS_FILE.read_text())
+        except (OSError, json.JSONDecodeError):
+            data = {}
+    data["proxy_url"] = proxy_url.strip()
+    data["no_proxy"] = no_proxy.strip() or "127.0.0.1,localhost"
     SETTINGS_FILE.parent.mkdir(parents=True, exist_ok=True)
-    data = {"proxy_url": proxy_url.strip(), "no_proxy": no_proxy.strip() or "127.0.0.1,localhost"}
     SETTINGS_FILE.write_text(json.dumps(data))
-    return data
+    return {"proxy_url": data["proxy_url"], "no_proxy": data["no_proxy"]}
 
 
 def proxy_env() -> dict:

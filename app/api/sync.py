@@ -1,8 +1,10 @@
 from datetime import datetime
+import asyncio
+import os
 from pathlib import Path
 from fastapi import APIRouter, Depends, HTTPException, BackgroundTasks
 from sqlalchemy.ext.asyncio import AsyncSession
-from sqlalchemy import select
+from sqlalchemy import select, update
 
 from app.database import get_db, AsyncSessionLocal
 from app.config import settings
@@ -16,6 +18,50 @@ from app.services.proxy import sync_blocked
 
 router = APIRouter(prefix="/api/sync", tags=["sync"])
 
+_count_cache = {}
+
+
+def _count_packages(root: Path, suffix: str):
+    now = datetime.utcnow().timestamp()
+    key = str(root)
+    cached = _count_cache.get(key)
+    if cached and now - cached[0] < 60:
+        return cached[1], cached[2]
+    if suffix == ".deb":
+        # Не сканируем пул внутри HTTP-запроса: это и давало 500.
+        return (cached[1], cached[2]) if cached else (0, 0)
+    files = 0
+    size = 0
+    if root.exists():
+        for dirpath, _, filenames in os.walk(root):
+            for name in filenames:
+                if not name.endswith(suffix):
+                    continue
+                files += 1
+                try:
+                    size += os.path.getsize(os.path.join(dirpath, name))
+                except OSError:
+                    pass
+    _count_cache[key] = (now, files, size)
+    return files, size
+
+
+def refresh_deb_cache():
+    root = settings.STORAGE_ROOT / "aptly"
+    now = datetime.utcnow().timestamp()
+    files = 0
+    size = 0
+    if root.exists():
+        for dirpath, _, filenames in os.walk(root):
+            for name in filenames:
+                if name.endswith(".deb"):
+                    files += 1
+                    try:
+                        size += os.path.getsize(os.path.join(dirpath, name))
+                    except OSError:
+                        pass
+    _count_cache[str(root)] = (now, files, size)
+
 
 async def _do_sync(mirror_id: int):
     """Фоновая задача синхронизации"""
@@ -25,20 +71,34 @@ async def _do_sync(mirror_id: int):
             return
 
         mirror.status = SyncStatus.RUNNING.value
+        mirror.last_error = None
+        await db.execute(
+            update(SyncLog)
+            .where(SyncLog.mirror_id == mirror.id, SyncLog.status == SyncStatus.RUNNING.value)
+            .values(status=SyncStatus.FAILED.value, finished_at=datetime.utcnow(), message="не прошла")
+        )
         log = SyncLog(mirror_id=mirror.id, status=SyncStatus.RUNNING.value)
         db.add(log)
+        await db.flush()
+        log_id = log.id
+        mirror_name = mirror.name
+        mirror_type = mirror.type
+        source_url = mirror.source_url
+        distribution = mirror.distribution
+        local_path = mirror.local_path
+        repoid = mirror.repoid
         await db.commit()
 
         success = False
         message = ""
-        set_mirror(mirror.id)
-        flog = mirror_logger(mirror.name)
+        set_mirror(mirror_id)
+        flog = mirror_logger(mirror_name)
         flog.info("sync started")
 
         try:
-            if mirror.type == "deb":
-                dist = mirror.distribution or "stable"
-                url = mirror.source_url.rstrip("/") + f"/dists/{dist}/Release"
+            if mirror_type == "deb":
+                dist = distribution or "stable"
+                url = source_url.rstrip("/") + f"/dists/{dist}/Release"
                 code, out, err = await deb_service.run_check(
                     ["curl", "-sS", "-o", "/dev/null", "-w", "%{http_code}", "--max-time", "20", url]
                 )
@@ -46,56 +106,62 @@ async def _do_sync(mirror_id: int):
                     success = False
                     message = f"Release недоступен: {url} http={out.strip() or 'нет'}"
                 else:
-                    ok, msg = await deb_service.update_mirror(mirror.name)
+                    ok, msg = await deb_service.update_mirror(mirror_name)
                     if ok:
-                        pok, pmsg = await deb_service.publish_mirror(mirror.name, dist)
+                        pok, pmsg = await deb_service.publish_mirror(mirror_name, dist)
                         ok = pok
                         msg = (msg or "") + "\n" + (pmsg or "")
                     success = ok
                     message = msg
-            else:  # rpm
+            else:
                 ok, msg = await rpm_service.sync_mirror(
-                    dest_path=mirror.local_path,
-                    repoid=mirror.repoid,
-                    source_url=mirror.source_url,
+                    dest_path=local_path,
+                    repoid=repoid,
+                    source_url=source_url,
                 )
                 success = ok
                 message = msg
-
-            mirror.status = SyncStatus.SUCCESS.value if success else SyncStatus.FAILED.value
-            mirror.last_sync = datetime.utcnow()
-            if success:
-                root = Path(mirror.local_path)
-                if mirror.type == "deb":
-                    root = settings.STORAGE_ROOT / "aptly"
-                total = 0
-                if root.exists():
-                    for path in root.rglob("*"):
-                        if path.is_file() and not path.is_symlink():
-                            try:
-                                total += path.stat().st_size
-                            except OSError:
-                                pass
-                mirror.size_bytes = total
-                mirror.last_error = None
-            else:
-                mirror.last_error = (message or "")[:2000]
-
-            log.status = mirror.status
-            log.finished_at = datetime.utcnow()
-            log.message = "прошла" if success else "не прошла"
-            log.log_output = None
-            flog.info("sync %s\n%s", log.message, message or "")
-
         except Exception as e:
-            mirror.status = SyncStatus.FAILED.value
-            mirror.last_error = str(e)[:500]
-            log.status = SyncStatus.FAILED.value
-            log.finished_at = datetime.utcnow()
-            log.message = "не прошла"
+            success = False
+            message = str(e)[:500]
             flog.exception("sync failed")
 
+        status = SyncStatus.SUCCESS.value if success else SyncStatus.FAILED.value
+        await db.execute(
+            update(Mirror)
+            .where(Mirror.id == mirror_id)
+            .values(
+                status=status,
+                last_sync=datetime.utcnow(),
+                last_error=None if success else (message or "")[:2000],
+                updated_at=datetime.utcnow(),
+            )
+        )
+        await db.execute(
+            update(SyncLog)
+            .where(SyncLog.id == log_id)
+            .values(
+                status=status,
+                finished_at=datetime.utcnow(),
+                message="прошла" if success else "не прошла",
+            )
+        )
         await db.commit()
+        flog.info("sync %s\n%s", "прошла" if success else "не прошла", message or "")
+        if success:
+            root = Path(local_path)
+            if mirror_type == "deb":
+                root = settings.STORAGE_ROOT / "public" / mirror_name
+            total = 0
+            if root.exists():
+                for path in root.rglob("*"):
+                    if path.is_file() and not path.is_symlink():
+                        try:
+                            total += path.stat().st_size
+                        except OSError:
+                            pass
+            await db.execute(update(Mirror).where(Mirror.id == mirror_id).values(size_bytes=total))
+            await db.commit()
 
 
 @router.post("/{mirror_id}")
@@ -130,7 +196,15 @@ async def stop_sync(mirror_id: int, db: AsyncSession = Depends(get_db)):
 
     process = get_process(mirror_id)
     if process is None or process.returncode is not None:
-        raise HTTPException(status_code=409, detail="Синхронизация не выполняется")
+        mirror.status = SyncStatus.FAILED.value
+        mirror.last_error = None
+        await db.execute(
+            update(SyncLog)
+            .where(SyncLog.mirror_id == mirror.id, SyncLog.status == SyncStatus.RUNNING.value)
+            .values(status=SyncStatus.FAILED.value, finished_at=datetime.utcnow(), message="не прошла")
+        )
+        await db.commit()
+        return {"message": "Процесса уже не было, статус сброшен", "mirror_id": mirror_id}
 
     try:
         os.killpg(os.getpgid(process.pid), signal.SIGTERM)
@@ -150,15 +224,17 @@ async def sync_progress(mirror_id: int, db: AsyncSession = Depends(get_db)):
         raise HTTPException(status_code=404, detail="Зеркало не найдено")
     item = dict(get_progress(mirror_id))
     root = Path(mirror.local_path)
+    suffix = ".rpm"
     if mirror.type == "deb":
-        root = settings.STORAGE_ROOT / "public" / mirror.name
-    files = 0
-    size = mirror.size_bytes or 0
-    if mirror.status == SyncStatus.RUNNING.value and mirror.type == "rpm" and root.exists():
-        try:
-            files = sum(1 for p in root.glob("*.rpm") if p.is_file())
-        except OSError:
-            files = 0
+        root = settings.STORAGE_ROOT / "aptly"
+        suffix = ".deb"
+    files, size = _count_packages(root, suffix)
+    if mirror.type == "deb":
+        cached = _count_cache.get(str(root))
+        if not cached or datetime.utcnow().timestamp() - cached[0] >= 60:
+            asyncio.get_running_loop().run_in_executor(None, refresh_deb_cache)
+    if not size and mirror.size_bytes:
+        size = mirror.size_bytes
     return {
         "mirror_id": mirror_id,
         "status": mirror.status,

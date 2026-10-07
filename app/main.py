@@ -1,6 +1,7 @@
 import logging
 import shutil
 from contextlib import asynccontextmanager
+from datetime import datetime
 from pathlib import Path
 
 from fastapi import FastAPI, Request, Depends, HTTPException
@@ -11,7 +12,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select, update
 
 from app.config import settings
-from app.services.proxy import load_proxy, save_proxy, load_min_free_gb, save_min_free_gb
+from app.services.proxy import load_proxy, save_proxy, load_min_free_gb, save_min_free_gb, load_min_free_gb, save_min_free_gb
 from app.database import init_db, get_db, AsyncSessionLocal
 from app.models import Mirror, LocalRepo, SyncLog, SyncStatus
 from app.services.scheduler import start_scheduler, stop_scheduler
@@ -42,6 +43,11 @@ async def lifespan(app: FastAPI):
             update(Mirror)
             .where(Mirror.status == SyncStatus.RUNNING.value)
             .values(status=SyncStatus.FAILED.value, last_error="Прервано перезапуском сервиса")
+        )
+        await db.execute(
+            update(SyncLog)
+            .where(SyncLog.status == SyncStatus.RUNNING.value)
+            .values(status=SyncStatus.FAILED.value, finished_at=datetime.utcnow(), message="не прошла")
         )
         await db.commit()
         logger.info("Сброшены зеркала, оставшиеся в running после перезапуска")
@@ -124,6 +130,16 @@ async def get_proxy():
 @app.put("/api/proxy")
 async def put_proxy(payload: dict):
     return save_proxy(payload.get("proxy_url", ""), payload.get("no_proxy", ""))
+
+
+@app.get("/api/min-free")
+async def get_min_free():
+    return {"min_free_gb": load_min_free_gb()}
+
+
+@app.put("/api/min-free")
+async def put_min_free(payload: dict):
+    return {"min_free_gb": save_min_free_gb(str(payload.get("min_free_gb") or ""))}
 
 
 @app.get("/api/disk")
