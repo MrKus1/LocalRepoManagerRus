@@ -6,116 +6,143 @@
     <title>{{ mirror.name }} — Repo Manager</title>
     <link href="/static/css/bootstrap.min.css" rel="stylesheet">
     <style>
-        body { background: #f5f6fa; }
-        .card { box-shadow: 0 2px 8px rgba(0,0,0,.08); }
+        body { background: #f5f6fa; min-height: 100vh; display: flex; flex-direction: column; }
+        .page-main { flex: 1 0 auto; }
+        .card { box-shadow: 0 2px 8px rgba(0,0,0,.08); border-width: 2px; }
         pre { white-space: pre-wrap; }
+        footer.app-footer { margin-top: auto; }
+        .reach-lamp { display: inline-block; width: 12px; height: 12px; border-radius: 50%; background: #adb5bd; }
+        .lamp-green { background: #198754; }
+        .lamp-red { background: #dc3545; }
+        .lamp-yellow { background: #ffc107; }
     </style>
 </head>
 <body>
+<div class="page-main">
 <nav class="navbar navbar-dark bg-dark mb-4">
     <div class="container">
         <a class="navbar-brand" href="/">Repo Manager</a>
+        <span class="navbar-text" id="diskInfo">диск: …</span>
     </div>
 </nav>
-<div class="container">
+<div class="container mb-4">
     <a class="btn btn-outline-secondary mb-3" href="/">← Назад к зеркалам</a>
     <div class="d-flex justify-content-between align-items-center mb-3">
         <h2 class="mb-0">{{ mirror.name }} <span class="badge bg-secondary">{{ mirror.type | upper }}</span></h2>
         <span>{{ mirror.status }}</span>
     </div>
-
     <div class="row g-3">
         <div class="col-lg-6">
-            <div class="card">
+            <div class="card" style="position:relative">
+                <span id="lamp" class="reach-lamp" style="position:absolute;top:12px;right:12px" title="nginx"></span>
                 <div class="card-body">
-                    <h5>Настройки</h5>
-                    <form id="editForm">
-                        <div class="mb-2"><label class="form-label">URL</label><input class="form-control" id="source_url" value="{{ mirror.source_url }}"></div>
-                        <div class="mb-2"><label class="form-label">Distribution</label><input class="form-control" id="distribution" value="{{ mirror.distribution or '' }}"></div>
-                        <div class="mb-2"><label class="form-label">Components</label><input class="form-control" id="components" value="{{ mirror.components or '' }}"></div>
-                        <div class="mb-2"><label class="form-label">Architectures</label><input class="form-control" id="architectures" value="{{ mirror.architectures or '' }}"></div>
-                        <div class="mb-2"><label class="form-label">Repoid</label><input class="form-control" id="repoid" value="{{ mirror.repoid or '' }}"></div>
-                        <div class="mb-2"><label class="form-label">Cron</label><input class="form-control" id="schedule" value="{{ mirror.schedule or '' }}"></div>
-                        <div class="mb-2"><label class="form-label">Описание</label><textarea class="form-control" id="description">{{ mirror.description or '' }}</textarea></div>
-                        <button class="btn btn-primary" type="submit">Сохранить</button>
-                        <button class="btn btn-outline-primary" type="button" id="syncBtn" onclick="syncMirror()" {% if mirror.status == 'running' %}style="display:none"{% endif %}>Sync</button>
-                        <button class="btn btn-outline-warning" type="button" id="stopBtn" onclick="stopMirror()" {% if mirror.status != 'running' %}style="display:none"{% endif %}>Стоп</button>
-                    </form>
+                <h5>Настройки</h5>
+                <form id="editForm">
+                    <div class="mb-2"><label class="form-label">URL</label><input class="form-control" id="source_url" value="{{ mirror.source_url }}"></div>
+                    <div class="mb-2"><label class="form-label">Distribution</label><input class="form-control" id="distribution" value="{{ mirror.distribution or '' }}"></div>
+                    <div class="mb-2"><label class="form-label">Components</label><input class="form-control" id="components" value="{{ mirror.components or '' }}"></div>
+                    <div class="mb-2"><label class="form-label">Architectures</label><input class="form-control" id="architectures" value="{{ mirror.architectures or '' }}"></div>
+                    <div class="mb-2"><label class="form-label">Repoid</label><input class="form-control" id="repoid" value="{{ mirror.repoid or '' }}"></div>
+                    <div class="mb-2"><label class="form-label">Cron</label><input class="form-control" id="schedule" value="{{ mirror.schedule or '' }}"></div>
+                    <div class="mb-2"><label class="form-label">Описание</label><textarea class="form-control" id="description">{{ mirror.description or '' }}</textarea></div>
+                    <button class="btn btn-primary" type="submit">Сохранить</button>
+                    <button class="btn btn-outline-primary" type="button" id="syncBtn" onclick="syncMirror()">Sync</button>
+                    <button class="btn btn-outline-warning" type="button" id="stopBtn" onclick="stopMirror()" {% if mirror.status != 'running' %}style="display:none"{% endif %}>Стоп</button>
+                </form>
                 </div>
             </div>
         </div>
         <div class="col-lg-6">
-            <div class="card mb-3">
-                <div class="card-body">
-                    <div class="d-flex justify-content-between">
-                        <h5>Строка для клиента</h5>
-                        <a class="btn btn-sm btn-outline-secondary" href="/api/mirrors/{{ mirror.id }}/client-file">Скачать</a>
-                        <button class="btn btn-sm btn-outline-primary" type="button" onclick="checkClient()">Проверить как клиент</button>
-                        {% if mirror.type == 'rpm' %}
-                        <button class="btn btn-sm btn-outline-warning" type="button" onclick="pruneOld()">Оставить последние версии</button>
-                        {% endif %}
-                    </div>
-                    <pre id="snippet">{{ client_snippet }}</pre>
-                    <p class="small text-muted mb-0">Путь на диске: {{ mirror.local_path }}</p>
-                    <pre id="checkResult" class="small mt-2 mb-0"></pre>
+            <div class="card mb-3"><div class="card-body">
+                <div class="d-flex justify-content-between">
+                    <h5>Строка для клиента</h5>
+                    <a class="btn btn-sm btn-outline-secondary" href="/api/mirrors/{{ mirror.id }}/client-file">Скачать</a>
                 </div>
-            </div>
-            <div class="card">
-                <div class="card-body">
-                    <h5>История sync</h5>
-                    <div style="max-height: 280px; overflow: auto;">
-                    <table class="table table-sm mb-0">
-                        <thead><tr><th>Зеркало</th><th>Время</th><th>Результат</th></tr></thead>
-                        <tbody>
-                        {% for log in logs %}
-                        <tr>
-                            <td>{{ mirror.name }}</td>
-                            <td class="text-nowrap">{{ log.started_at.strftime('%Y-%m-%d %H:%M') if log.started_at else '' }}</td>
-                            <td>{% if log.status == 'success' %}прошла{% elif log.status == 'running' %}идёт{% else %}не прошла{% endif %}</td>
-                        </tr>
-                        {% else %}
-                        <tr><td colspan="3" class="text-muted">Запусков ещё нет.</td></tr>
-                        {% endfor %}
-                        </tbody>
-                    </table>
-                    </div>
-                    <p class="small text-muted mt-2 mb-0">Полный лог: /var/lib/repo-manager/logs/{{ mirror.name }}.log</p>
+                <pre id="snippet">{{ client_snippet }}</pre>
+                <p class="small text-muted mb-0">Путь на диске: {{ mirror.local_path }}</p>
+                <pre id="checkResult" class="small mt-2 mb-0"></pre>
+                {% if mirror.type == 'rpm' %}
+                <button class="btn btn-sm btn-outline-warning mt-2" type="button" onclick="pruneOld()">Оставить последние версии</button>
+                {% endif %}
+            </div></div>
+            <div class="card"><div class="card-body">
+                <h5>История sync</h5>
+                <div style="max-height: 280px; overflow: auto;">
+                <table class="table table-sm mb-0" id="history">
+                    <thead><tr><th>Зеркало</th><th>Время</th><th>Результат</th></tr></thead>
+                    <tbody>
+                    {% for log in logs %}
+                    <tr>
+                        <td>{{ mirror.name }}</td>
+                        <td class="text-nowrap">{{ log.started_at.strftime('%Y-%m-%d %H:%M') if log.started_at else '' }}</td>
+                        <td>{% if log.status == 'success' %}прошла{% elif log.status == 'running' %}идёт{% else %}не прошла{% endif %}</td>
+                    </tr>
+                    {% else %}
+                    <tr><td colspan="3" class="text-muted">Запусков ещё нет.</td></tr>
+                    {% endfor %}
+                    </tbody>
+                </table>
                 </div>
-            </div>
+                <p class="small text-muted mt-2 mb-0">Полный лог: /var/lib/repo-manager/logs/{{ mirror.name }}.log</p>
+            </div></div>
         </div>
         <div class="col-12">
-            <div class="card">
-                <div class="card-body">
-                    <h5>Пакеты</h5>
-                    <input id="q" class="form-control mb-2" placeholder="поиск">
-                    <div id="meta" class="small text-muted mb-2"></div>
-                    <div id="list" style="max-height: 420px; overflow: auto;"></div>
-                    <div class="d-flex justify-content-between mt-2">
-                        <button class="btn btn-sm btn-outline-secondary" id="prev" type="button">Назад</button>
-                        <span id="page" class="small text-muted"></span>
-                        <button class="btn btn-sm btn-outline-secondary" id="next" type="button">Дальше</button>
-                    </div>
-                </div>
-            </div>
+            <div class="card"><div class="card-body">
+                <h5>Пакеты</h5>
+                <input id="q" class="form-control mb-2" placeholder="поиск">
+                <div id="meta" class="small text-muted mb-2"></div>
+                <div id="list" style="max-height: 420px; overflow: auto;"></div>
+            </div></div>
         </div>
     </div>
 </div>
+</div>
+<footer class="app-footer bg-dark text-light">
+    <div class="container py-3">Локальный менеджер репозиториев</div>
+</footer>
 <script src="/static/js/bootstrap.bundle.min.js"></script>
 <script>
 const id = {{ mirror.id }};
-let offset = 0;
-const limit = 50;
+fetch('/api/mirrors/' + id + '/client-check').then(r => r.json()).then(d => {
+    const lamp = document.getElementById('lamp');
+    if (!lamp) return;
+    if ('{{ mirror.status }}' === 'running') {
+        lamp.className = 'reach-lamp lamp-yellow';
+        lamp.title = 'синхронизируется';
+        return;
+    }
+    lamp.className = 'reach-lamp ' + (d.ok ? 'lamp-green' : 'lamp-red');
+    lamp.title = d.ok ? 'nginx отдаёт' : 'nginx не отдаёт ' + (d.http_code || '');
+});
+fetch('/api/disk').then(r => r.json()).then(d => {
+    const gb = n => (n / 1024 / 1024 / 1024).toFixed(1) + ' ГБ';
+    document.getElementById('diskInfo').textContent = 'диск ' + gb(d.used_bytes) + ' занято, ' + gb(d.free_bytes) + ' свободно';
+});
+setInterval(async () => {
+    const res = await fetch('/api/sync/' + id + '/progress');
+    if (!res.ok) return;
+    const data = await res.json();
+    const stopBtn = document.getElementById('stopBtn');
+    const syncBtn = document.getElementById('syncBtn');
+    if (stopBtn) stopBtn.style.display = data.status === 'running' ? '' : 'none';
+    if (syncBtn) syncBtn.style.display = data.status === 'running' ? 'none' : '';
+}, 5000);
+setInterval(async () => {
+    const res = await fetch('/api/sync/' + id + '/logs');
+    if (!res.ok) return;
+    const logs = await res.json();
+    const body = document.querySelector('#history tbody');
+    if (!body) return;
+    body.innerHTML = logs.map(l => '<tr><td>{{ mirror.name }}</td><td>' + (l.started_at || '') + '</td><td>' + (l.status === 'success' ? 'прошла' : l.status === 'running' ? 'идёт' : 'не прошла') + '</td></tr>').join('') || '<tr><td colspan="3">Запусков ещё нет.</td></tr>';
+}, 10000);
 async function load() {
     const q = document.getElementById('q').value || '';
-    const res = await fetch('/api/mirrors/' + id + '/contents?limit=' + limit + '&offset=' + offset + '&q=' + encodeURIComponent(q));
+    const res = await fetch('/api/mirrors/' + id + '/contents?limit=50&q=' + encodeURIComponent(q));
     const data = await res.json();
     document.getElementById('meta').textContent = 'Всего ' + (data.total || 0);
-    document.getElementById('page').textContent = (data.offset + 1) + '–' + (data.offset + (data.packages || []).length);
     document.getElementById('list').innerHTML = (data.packages || []).map(p => '<div class="border-bottom py-1"><code>' + p.name + '</code></div>').join('') || 'пусто';
 }
-document.getElementById('q').addEventListener('input', () => { offset = 0; load(); });
-document.getElementById('prev').addEventListener('click', () => { offset = Math.max(0, offset - limit); load(); });
-document.getElementById('next').addEventListener('click', () => { offset += limit; load(); });
+document.getElementById('q').addEventListener('input', load);
 load();
 document.getElementById('editForm').addEventListener('submit', async (e) => {
     e.preventDefault();
@@ -127,35 +154,21 @@ document.getElementById('editForm').addEventListener('submit', async (e) => {
 });
 async function syncMirror() {
     const res = await fetch('/api/sync/' + id, {method:'POST'});
-    const data = await res.json().catch(() => ({}));
-    if (!res.ok) { alert(data.detail || res.status); return; }
+    if (!res.ok) { const d = await res.json().catch(() => ({})); alert(d.detail || res.status); return; }
     location.reload();
 }
 async function stopMirror() {
     const res = await fetch('/api/sync/' + id + '/stop', {method:'POST'});
-    const data = await res.json().catch(() => ({}));
-    if (!res.ok) { alert(data.detail || res.status); return; }
+    if (!res.ok) { const d = await res.json().catch(() => ({})); alert(d.detail || res.status); return; }
     location.reload();
 }
 async function pruneOld() {
-    if (!confirm('Удалить старые версии RPM и оставить только последние?')) return;
-    const res = await fetch('/api/mirrors/' + id + '/prune-old', {method: 'POST'});
+    if (!confirm('Удалить старые версии RPM?')) return;
+    const res = await fetch('/api/mirrors/' + id + '/prune-old', {method:'POST'});
     const data = await res.json().catch(() => ({}));
     if (!res.ok) { alert(data.detail || res.status); return; }
-    alert('Удалено старых пакетов: ' + data.removed);
+    alert('Удалено: ' + data.removed);
     location.reload();
-}
-
-async function checkClient() {
-    const box = document.getElementById('checkResult');
-    box.textContent = 'проверка...';
-    const res = await fetch('/api/mirrors/' + id + '/client-check');
-    const data = await res.json().catch(() => ({}));
-    box.textContent = (data.ok ? 'OK' : 'Ошибка') + ' ' + (data.http_code || '') + ' ' + (data.url || '') + ' ' + (data.error || '');
-}
-
-function copySnippet() {
-    navigator.clipboard.writeText(document.getElementById('snippet').textContent);
 }
 </script>
 </body>

@@ -111,6 +111,36 @@ async def local_repo_contents(
     }
 
 
+@router.delete("/local-repos/{repo_id}/packages/{filename}", status_code=204)
+async def delete_package(repo_id: int, filename: str, db: AsyncSession = Depends(get_db)):
+    repo = await db.get(LocalRepo, repo_id)
+    if not repo:
+        raise HTTPException(status_code=404, detail="Репозиторий не найден")
+    if "/" in filename or ".." in filename:
+        raise HTTPException(status_code=400, detail="Некорректное имя файла")
+
+    root = Path(repo.local_path)
+    removed = False
+    if root.exists():
+        for path in root.rglob(filename):
+            if path.is_file() and path.name == filename:
+                path.unlink()
+                removed = True
+    if repo.type == "rpm":
+        ok, msg = await rpm_service.update_metadata(str(root))
+        if not ok:
+            raise HTTPException(status_code=500, detail=msg[:500])
+    else:
+        name = filename.rsplit(".", 1)[0]
+        await deb_service.run_check([deb_service.aptly, "repo", "remove", repo.name, name])
+    result = await db.execute(select(Package).where(Package.repo_id == repo.id, Package.filename == filename))
+    for pkg in result.scalars().all():
+        await db.delete(pkg)
+    if not removed:
+        raise HTTPException(status_code=404, detail="Файл не найден")
+    return None
+
+
 @router.delete("/local-repos/{repo_id}", status_code=204)
 async def delete_local_repo(
     repo_id: int,

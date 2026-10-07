@@ -11,7 +11,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select, update
 
 from app.config import settings
-from app.services.proxy import load_proxy, save_proxy
+from app.services.proxy import load_proxy, save_proxy, load_min_free_gb, save_min_free_gb
 from app.database import init_db, get_db, AsyncSessionLocal
 from app.models import Mirror, LocalRepo, SyncLog, SyncStatus
 from app.services.scheduler import start_scheduler, stop_scheduler
@@ -44,6 +44,7 @@ async def lifespan(app: FastAPI):
             .values(status=SyncStatus.FAILED.value, last_error="Прервано перезапуском сервиса")
         )
         await db.commit()
+        logger.info("Сброшены зеркала, оставшиеся в running после перезапуска")
     start_scheduler()
     logger.info("Database initialized")
     

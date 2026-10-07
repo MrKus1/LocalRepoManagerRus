@@ -11,6 +11,7 @@
         .page-main { flex: 1 0 auto; }
         footer.app-footer { margin-top: auto; }
         .reach-lamp { position: absolute; top: 10px; right: 10px; width: 12px; height: 12px; border-radius: 50%; background: #adb5bd; box-shadow: 0 0 6px #adb5bd; }
+        .card { position: relative; }
         .lamp-green { background: #198754; box-shadow: 0 0 8px #198754; }
         .lamp-red { background: #dc3545; box-shadow: 0 0 8px #dc3545; }
         .lamp-yellow { background: #ffc107; box-shadow: 0 0 8px #ffc107; }
@@ -34,7 +35,7 @@
 <nav class="navbar navbar-dark bg-dark mb-4">
     <div class="container">
         <a class="navbar-brand" href="/">Repo Manager</a>
-        <span class="navbar-text text-muted">deb + rpm mirrors</span>
+        <span class="navbar-text" id="diskInfo">диск: …</span>
     </div>
 </nav>
 
@@ -42,6 +43,7 @@
     <div class="row mb-3 align-items-center">
         <div class="col">
             <h2 class="mb-0">Зеркала</h2>
+            <div class="small text-muted">включено {{ mirrors|selectattr('enabled')|list|length }}, с ошибкой {{ mirrors|selectattr('status', 'equalto', 'failed')|list|length }}</div>
         </div>
         <div class="col-auto d-flex flex-wrap gap-2 justify-content-end">
             <a class="btn btn-outline-primary btn-sm" href="/api/mirrors/export">Экспорт</a>
@@ -51,20 +53,21 @@
             <button class="btn btn-primary btn-sm" data-bs-toggle="modal" data-bs-target="#addMirrorModal">+ Добавить зеркало</button>
         </div>
     </div>
-    <div class="mb-4">
+    <div class="mb-4 d-flex align-items-center">
         <div class="btn-group">
             <button class="btn btn-outline-secondary btn-sm filter-btn active" data-filter="all">Все</button>
             <button class="btn btn-outline-secondary btn-sm filter-btn" data-filter="rpm">RPM</button>
             <button class="btn btn-outline-secondary btn-sm filter-btn" data-filter="deb">DEB</button>
             <button class="btn btn-outline-secondary btn-sm filter-btn" data-filter="failed">С ошибкой</button>
         </div>
+        <input id="mirrorSearch" class="form-control form-control-sm ms-2" style="width: 220px" placeholder="поиск по имени">
     </div>
 
     <div class="row">
         {% for m in mirrors %}
-        <div class="col-md-6 col-lg-4 mb-3 mirror-card" data-type="{{ m.type }}" data-status="{{ m.status }}">
+        <div class="col-md-6 col-lg-4 mb-3 mirror-card" data-type="{{ m.type }}" data-status="{{ m.status }}" data-name="{{ m.name|lower }}">
             <div class="card h-100 card-{{ m.status }}" id="card-{{ m.id }}">
-                <span class="reach-lamp" data-id="{{ m.id }}" data-status="{{ m.status }}" title="проверка"></span>
+                <span class="reach-lamp" data-id="{{ m.id }}" data-status="{{ m.status }}" title="проверка nginx"></span>
                 <div class="card-body">
                     <div class="d-flex justify-content-between align-items-start">
                         <h5 class="card-title mb-1"><a href="/mirrors/{{ m.id }}" class="text-decoration-none">{{ m.name }}</a></h5>
@@ -72,15 +75,16 @@
                             {{ m.type | upper }}
                         </span>
                     </div>
-                    <p class="card-text text-muted small mb-2">{{ m.description or m.source_url }}</p>
+                    <p class="card-text text-muted small mb-2 text-truncate">{{ m.description or m.distribution or '' }}</p>
                     <p class="mb-1">
                         Статус:
                         <span class="status-{{ m.status }}" id="status-{{ m.id }}">{{ m.status }}</span>
                     </p>
+                    <p class="small text-muted mb-2">nginx: <span id="lamp-label-{{ m.id }}">проверка</span></p>
                     <div class="progress mb-2" style="height: 8px;">
                         <div class="progress-bar" id="bar-{{ m.id }}" style="width: 0%"></div>
                     </div>
-                    <p class="small text-muted mb-2" id="progress-{{ m.id }}"></p>
+                    <p class="small text-muted mb-2" id="progress-{{ m.id }}">{% if m.size_bytes %}{{ (m.size_bytes / 1024 / 1024 / 1024)|round(2) }} ГБ{% else %}размер появится во время sync{% endif %}</p>
                     {% if m.schedule %}
                     <p class="small text-muted mb-2">Расписание: <span class="cron-human" data-cron="{{ m.schedule }}">{{ m.schedule }}</span></p>
                     {% endif %}
@@ -90,21 +94,24 @@
                     </p>
                     {% endif %}
                     {% if m.last_error %}
-                    <div class="alert alert-danger py-1 px-2 small err-line" title="Нажми, чтобы раскрыть" onclick="this.classList.toggle('text-wrap'); this.style.whiteSpace = this.style.whiteSpace ? '' : 'normal';">{{ m.last_error }}</div>
+                    <div class="alert alert-danger py-1 px-2 small err-line" title="{{ m.last_error }}">{{ m.last_error }}</div>
                     {% endif %}
                     <div class="d-flex flex-wrap gap-2">
                         <button class="btn btn-sm btn-outline-primary sync-btn" data-id="{{ m.id }}" onclick="syncMirror({{ m.id }})" {% if m.status == 'running' %}style="display:none"{% endif %}>Sync</button>
                         <button class="btn btn-sm btn-outline-warning stop-btn" data-id="{{ m.id }}" onclick="stopMirror({{ m.id }})" {% if m.status != 'running' %}style="display:none"{% endif %}>Стоп</button>
                         <a class="btn btn-sm btn-outline-secondary" href="/mirrors/{{ m.id }}">Открыть</a>
-                        <button class="btn btn-sm btn-outline-danger" onclick="deleteMirror({{ m.id }}, '{{ m.name }}', false)">Удалить</button>
-                        <button class="btn btn-sm btn-danger" onclick="deleteMirror({{ m.id }}, '{{ m.name }}', true)">Удалить с файлами</button>
+                        <button class="btn btn-sm btn-outline-secondary" onclick="showContents({{ m.id }}, '{{ m.name }}')">Пакеты</button>
+                        <button class="btn btn-sm btn-outline-danger" onclick="deleteMirror({{ m.id }}, '{{ m.name }}')" {% if m.status == 'running' %}disabled title="дождитесь окончания sync"{% endif %}>Удалить</button>
                     </div>
                 </div>
             </div>
         </div>
         {% else %}
         <div class="col-12">
-            <div class="alert alert-info">Зеркал пока нет. Добавьте первое.</div>
+            <div class="alert alert-info d-flex justify-content-between align-items-center">
+                <span>Зеркал пока нет.</span>
+                <button class="btn btn-primary btn-sm" data-bs-toggle="modal" data-bs-target="#addMirrorModal">Добавить</button>
+            </div>
         </div>
         {% endfor %}
     </div>
@@ -136,19 +143,9 @@
                     <p class="text-muted small">{{ r.description or r.local_path }}</p>
                     <div class="d-flex flex-wrap gap-2">
                         <input type="file" id="up-{{ r.id }}" accept=".rpm,.deb" hidden onchange="uploadPkg({{ r.id }}, this)">
-                        <button class="btn btn-sm btn-outline-primary" onclick="document.getElementById('up-{{ r.id }}').click()">Загрузить пакет</button>
-                        <button class="btn btn-sm btn-outline-secondary"
-                                onclick="showContents({{ r.id }}, '{{ r.name }}', 'local')">
-                            Содержимое
-                        </button>
-                        <button class="btn btn-sm btn-outline-danger"
-                                onclick="deleteLocal({{ r.id }}, '{{ r.name }}', false)">
-                            Удалить
-                        </button>
-                        <button class="btn btn-sm btn-danger"
-                                onclick="deleteLocal({{ r.id }}, '{{ r.name }}', true)">
-                            Удалить с файлами
-                        </button>
+                        <button class="btn btn-sm btn-outline-primary" onclick="document.getElementById('up-{{ r.id }}').click()">Загрузить</button>
+                        <button class="btn btn-sm btn-outline-secondary" onclick="showContents({{ r.id }}, '{{ r.name }}', 'local')">Содержимое</button>
+                        <button class="btn btn-sm btn-outline-danger" onclick="deleteLocal({{ r.id }}, '{{ r.name }}')">Удалить</button>
                     </div>
                 </div>
             </div>
@@ -176,6 +173,10 @@
                     <input id="noProxy" class="form-control form-control-sm" placeholder="127.0.0.1,localhost">
                 </div>
                 <div class="col-md-2">
+                    <label class="form-label mb-1">Мин. свободно, ГБ</label>
+                    <input id="minFree" class="form-control form-control-sm" placeholder="пусто = без лимита">
+                </div>
+                <div class="col-md-2">
                     <button class="btn btn-sm btn-outline-secondary w-100" onclick="saveProxy()">Сохранить</button>
                 </div>
             </div>
@@ -185,10 +186,7 @@
 </div>
 
 <footer class="app-footer bg-dark text-light">
-    <div class="container d-flex justify-content-between py-3">
-        <span>Локальный менеджер репозиториев</span>
-        <span id="diskInfo">диск: …</span>
-    </div>
+    <div class="container py-3">Локальный менеджер репозиториев</div>
 </footer>
 
 <div class="modal fade" id="editMirrorModal" tabindex="-1">
@@ -379,6 +377,10 @@ fetch('/api/proxy').then(r => r.json()).then(d => {
     document.getElementById('noProxy').value = d.no_proxy || '';
 });
 
+fetch('/api/min-free').then(r => r.json()).then(d => {
+    document.getElementById('minFree').value = d.min_free_gb || '';
+});
+
 async function saveProxy() {
     const res = await fetch('/api/proxy', {
         method: 'PUT',
@@ -388,11 +390,16 @@ async function saveProxy() {
             no_proxy: document.getElementById('noProxy').value
         })
     });
-    if (!res.ok) {
-        alert('Не удалось сохранить прокси');
+    const res2 = await fetch('/api/min-free', {
+        method: 'PUT',
+        headers: {'Content-Type': 'application/json'},
+        body: JSON.stringify({min_free_gb: document.getElementById('minFree').value})
+    });
+    if (!res.ok || !res2.ok) {
+        alert('Не удалось сохранить');
         return;
     }
-    alert('Прокси сохранён. Будет использован при следующем sync.');
+    alert('Сохранено. Порог действует на следующий sync.');
 }
 
 fetch('/api/disk').then(r => r.json()).then(d => {
@@ -461,7 +468,16 @@ document.querySelectorAll('.reach-lamp').forEach(async el => {
     const res = await fetch('/api/mirrors/' + el.dataset.id + '/client-check');
     const data = await res.json().catch(() => ({ok: false}));
     el.className = 'reach-lamp ' + (data.ok ? 'lamp-green' : 'lamp-red');
-    el.title = data.ok ? 'nginx отдаёт репозиторий' : 'nginx не отдаёт: ' + (data.http_code || data.error || '');
+    el.title = data.ok ? 'nginx отдал 200' : 'nginx не отдал репозиторий';
+    const label = document.getElementById('lamp-label-' + el.dataset.id);
+    if (label) label.textContent = data.ok ? 'nginx 200' : 'nginx нет';
+});
+
+document.getElementById('mirrorSearch').addEventListener('input', (e) => {
+    const q = e.target.value.toLowerCase();
+    document.querySelectorAll('.mirror-card').forEach(card => {
+        card.style.display = card.dataset.name.includes(q) ? '' : 'none';
+    });
 });
 
 document.querySelectorAll('.filter-btn').forEach(btn => {
@@ -592,11 +608,9 @@ async function stopMirror(id) {
     setTimeout(() => location.reload(), 800);
 }
 
-async function deleteMirror(id, name, withFiles) {
-    const msg = withFiles
-        ? 'Удалить зеркало «' + name + '» вместе с файлами на диске?'
-        : 'Удалить зеркало «' + name + '» только из базы? Файлы останутся.';
-    if (!confirm(msg)) return;
+async function deleteMirror(id, name) {
+    if (!confirm('Удалить зеркало «' + name + '»?')) return;
+    const withFiles = confirm('Удалить также файлы на диске?');
     const res = await fetch('/api/mirrors/' + id + '?delete_files=' + (withFiles ? 'true' : 'false'), {method: 'DELETE'});
     if (res.status === 204) {
         location.reload();
@@ -606,11 +620,21 @@ async function deleteMirror(id, name, withFiles) {
     alert('Ошибка: ' + (data.detail || res.status));
 }
 
-async function deleteLocal(id, name, withFiles) {
-    const msg = withFiles
-        ? 'Удалить локальный репозиторий «' + name + '» вместе с файлами?'
-        : 'Удалить локальный репозиторий «' + name + '» только из базы?';
-    if (!confirm(msg)) return;
+async function deletePkg(filename) {
+    if (contentsKind !== 'local') return;
+    if (!confirm('Удалить пакет ' + filename + '?')) return;
+    const res = await fetch('/api/local-repos/' + contentsMirrorId + '/packages/' + encodeURIComponent(filename), {method: 'DELETE'});
+    if (res.status !== 204) {
+        const data = await res.json().catch(() => ({}));
+        alert(data.detail || res.status);
+        return;
+    }
+    loadContents();
+}
+
+async function deleteLocal(id, name) {
+    if (!confirm('Удалить локальный репозиторий «' + name + '»?')) return;
+    const withFiles = confirm('Удалить также файлы на диске?');
     const res = await fetch('/api/local-repos/' + id + '?delete_files=' + (withFiles ? 'true' : 'false'), {method: 'DELETE'});
     if (res.status === 204) {
         location.reload();
@@ -637,10 +661,13 @@ async function loadContents() {
     document.getElementById('prevPage').disabled = contentsOffset <= 0;
     document.getElementById('nextPage').disabled = contentsOffset + pageSize >= total;
     const list = document.getElementById('contentsList');
-    list.innerHTML = (data.packages || []).map(p =>
-        '<div class="border-bottom py-1"><code>' + p.name + '</code> <span class="text-muted small">' +
-        (p.size_bytes / 1024 / 1024).toFixed(2) + ' МБ</span></div>'
-    ).join('') || '<div class="text-muted">Пакетов не найдено</div>';
+    list.innerHTML = (data.packages || []).map(p => {
+        const del = contentsKind === 'local'
+            ? ' <button class="btn btn-sm btn-outline-danger py-0" onclick="deletePkg(\'' + p.name.replace(/'/g, '') + '\')">удалить</button>'
+            : '';
+        return '<div class="border-bottom py-1 d-flex justify-content-between"><span><code>' + p.name + '</code> <span class="text-muted small">' +
+            (p.size_bytes / 1024 / 1024).toFixed(2) + ' МБ</span></span>' + del + '</div>';
+    }).join('') || '<div class="text-muted">Пакетов не найдено</div>';
 }
 
 function showContents(id, name, kind) {

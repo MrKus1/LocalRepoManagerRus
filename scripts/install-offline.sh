@@ -42,10 +42,11 @@ dnf install -y \
     createrepo_c \
     rsync \
     postgresql-server postgresql-contrib \
+    nginx \
     2>/dev/null || dnf install -y \
     python3 python3-pip python3-devel \
     dnf-plugins-core createrepo_c rsync \
-    postgresql-server postgresql-contrib
+    postgresql-server postgresql-contrib nginx
 
 # Определяем python
 PYTHON=$(command -v python3.12 || command -v python3)
@@ -193,21 +194,23 @@ EOF
 systemctl daemon-reload
 systemctl enable repo-manager
 
+echo "==> Nginx"
+cp "$INSTALL_DIR/scripts/nginx-repo-manager.conf" /etc/nginx/conf.d/repo-manager.conf
+nginx -t && systemctl enable --now nginx && systemctl reload nginx || echo "ВНИМАНИЕ: nginx не запустился"
+
+PG_PASS=$(grep ^POSTGRES_PASSWORD= "$INSTALL_DIR/.env" | cut -d= -f2- | tr -d ' "' || echo changeme)
 echo ""
 echo "=========================================="
 echo "  Установка завершена"
 echo "=========================================="
-echo ""
-echo "1. Отредактируй пароль (если ещё не сделал):"
-echo "   nano $INSTALL_DIR/.env"
-echo ""
-echo "2. Если менял пароль PostgreSQL — обнови его и в БД:"
-echo "   sudo -u postgres psql -c \"ALTER USER repoman PASSWORD 'новый_пароль';\""
-echo ""
-echo "3. Запуск:"
-echo "   systemctl start repo-manager"
-echo "   systemctl status repo-manager"
-echo ""
-echo "4. Открыть: http://$(hostname -I | awk '{print $1}'):8000"
-echo "   API docs: http://...:8000/docs"
-echo ""
+echo "Пароль PostgreSQL из .env: ${PG_PASS}"
+echo "Файл: $INSTALL_DIR/.env"
+if grep -E 'ident|peer' /var/lib/pgsql/data/pg_hba.conf 2>/dev/null | grep -v '^#' >/dev/null; then
+  echo "ВНИМАНИЕ: в pg_hba.conf ещё есть ident/peer."
+  echo "Замени на scram-sha-256 и выполни: systemctl restart postgresql"
+else
+  echo "pg_hba.conf: ident/peer не найден."
+fi
+echo "Интерфейс: http://$(hostname -I | awk '{print $1}'):8000"
+echo "Пакеты:    http://$(hostname -I | awk '{print $1}')/repo/rpm/ и /repo/deb/"
+echo "Запуск:    systemctl start repo-manager"

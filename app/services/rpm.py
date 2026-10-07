@@ -70,7 +70,11 @@ class RpmService:
 
         if repoid:
             cmd.extend(["--repoid", repoid])
-        elif source_url:
+        if source_url:
+            url = source_url.rstrip("/") + "/repodata/repomd.xml"
+            code, out, err = await run_cmd(["curl", "-fsSL", "-o", "/dev/null", "-w", "%{http_code}", "--max-time", "20", url])
+            if code != 0 or out.strip() != "200":
+                return False, f"repomd.xml недоступен: {url} http={out.strip() or 'нет'} {err.strip()[:200]}"
             temp_name = dest.name
             cmd.extend([
                 f"--repofrompath={temp_name},{source_url}",

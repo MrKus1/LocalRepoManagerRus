@@ -12,6 +12,7 @@ from app.services.deb import deb_service
 from app.services.rpm import rpm_service
 from app.services.procs import set_mirror, get_process, get_progress
 from app.services.filelog import mirror_logger
+from app.services.proxy import sync_blocked
 
 router = APIRouter(prefix="/api/sync", tags=["sync"])
 
@@ -36,16 +37,22 @@ async def _do_sync(mirror_id: int):
 
         try:
             if mirror.type == "deb":
-                ok, msg = await deb_service.update_mirror(mirror.name)
-                if ok:
-                    pok, pmsg = await deb_service.publish_mirror(
-                        mirror.name,
-                        mirror.distribution or "stable",
-                    )
-                    ok = pok
-                    msg = (msg or "") + "\n" + (pmsg or "")
-                success = ok
-                message = msg
+                dist = mirror.distribution or "stable"
+                url = mirror.source_url.rstrip("/") + f"/dists/{dist}/Release"
+                code, out, err = await deb_service.run_check(
+                    ["curl", "-sS", "-o", "/dev/null", "-w", "%{http_code}", "--max-time", "20", url]
+                )
+                if out.strip() != "200":
+                    success = False
+                    message = f"Release недоступен: {url} http={out.strip() or 'нет'}"
+                else:
+                    ok, msg = await deb_service.update_mirror(mirror.name)
+                    if ok:
+                        pok, pmsg = await deb_service.publish_mirror(mirror.name, dist)
+                        ok = pok
+                        msg = (msg or "") + "\n" + (pmsg or "")
+                    success = ok
+                    message = msg
             else:  # rpm
                 ok, msg = await rpm_service.sync_mirror(
                     dest_path=mirror.local_path,
@@ -57,10 +64,22 @@ async def _do_sync(mirror_id: int):
 
             mirror.status = SyncStatus.SUCCESS.value if success else SyncStatus.FAILED.value
             mirror.last_sync = datetime.utcnow()
-            if not success:
-                mirror.last_error = message[:2000]
-            else:
+            if success:
+                root = Path(mirror.local_path)
+                if mirror.type == "deb":
+                    root = settings.STORAGE_ROOT / "aptly"
+                total = 0
+                if root.exists():
+                    for path in root.rglob("*"):
+                        if path.is_file() and not path.is_symlink():
+                            try:
+                                total += path.stat().st_size
+                            except OSError:
+                                pass
+                mirror.size_bytes = total
                 mirror.last_error = None
+            else:
+                mirror.last_error = (message or "")[:2000]
 
             log.status = mirror.status
             log.finished_at = datetime.utcnow()
@@ -132,18 +151,14 @@ async def sync_progress(mirror_id: int, db: AsyncSession = Depends(get_db)):
     item = dict(get_progress(mirror_id))
     root = Path(mirror.local_path)
     if mirror.type == "deb":
-        root = settings.STORAGE_ROOT / "aptly"
+        root = settings.STORAGE_ROOT / "public" / mirror.name
     files = 0
-    size = 0
-    suffix = ".rpm" if mirror.type == "rpm" else ".deb"
-    if root.exists():
-        for path in root.rglob(f"*{suffix}"):
-            if path.is_file() and not path.is_symlink():
-                files += 1
-                try:
-                    size += path.stat().st_size
-                except OSError:
-                    pass
+    size = mirror.size_bytes or 0
+    if mirror.status == SyncStatus.RUNNING.value and mirror.type == "rpm" and root.exists():
+        try:
+            files = sum(1 for p in root.glob("*.rpm") if p.is_file())
+        except OSError:
+            files = 0
     return {
         "mirror_id": mirror_id,
         "status": mirror.status,

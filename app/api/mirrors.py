@@ -244,7 +244,7 @@ async def mirror_contents(
 
     root = Path(mirror.local_path)
     if mirror.type == "deb":
-        published = settings.STORAGE_ROOT / "public"
+        published = settings.STORAGE_ROOT / "public" / mirror.name
         if published.exists():
             root = published
     if not root.exists():
@@ -305,6 +305,7 @@ async def delete_mirror(
     if delete_files and mirror.type == "deb":
         try:
             await deb_service.drop_mirror(mirror.name, mirror.distribution or "stable")
+            await deb_service.cleanup()
         except Exception:
             pass
 
