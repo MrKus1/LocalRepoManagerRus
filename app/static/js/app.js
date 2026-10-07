@@ -18,7 +18,9 @@ function loadSettings() {
     const disk = document.getElementById('diskInfo');
     if (disk) {
         fetch('/api/disk').then(r => r.json()).then(d => {
-            disk.textContent = 'диск ' + fmtGb(d.used_bytes) + ' занято, ' + fmtGb(d.free_bytes) + ' свободно из ' + fmtGb(d.total_bytes);
+            disk.textContent = 'Использование диска: ' + fmtGb(d.used_bytes) + ' / ' + fmtGb(d.total_bytes);
+            const bar = document.getElementById('diskBar');
+            if (bar && d.total_bytes) bar.style.width = Math.round(d.used_bytes / d.total_bytes * 100) + '%';
         }).catch(() => { disk.textContent = 'диск: нет данных'; });
     }
 }

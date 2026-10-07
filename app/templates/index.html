@@ -5,7 +5,7 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Менеджер репозиториев</title>
     <link href="/static/css/bootstrap.min.css" rel="stylesheet">
-    <link href="/static/css/app.css" rel="stylesheet">
+    <link href="/static/css/app.css?v=4" rel="stylesheet">
     <script src="/static/js/htmx.min.js"></script>
 </head>
 <body>
@@ -14,7 +14,7 @@
     <div class="container">
         <span class="menu-link" onclick="toggleMenu()" title="Меню"><i></i><i></i><i></i></span>
         <a class="navbar-brand mb-0" href="/">Менеджер репозиториев</a>
-        <span class="navbar-text" id="diskInfo">диск: …</span>
+        <span class="navbar-text text-end"><span id="diskInfo">диск: …</span><div class="disk-bar mt-1"><span id="diskBar" style="width:0"></span></div></span>
     </div>
 </nav>
 <div class="side-backdrop" id="sideBackdrop" onclick="toggleMenu()"></div>
@@ -26,6 +26,7 @@
     <a href="/">Зеркала</a>
     <a href="/#local">Локальные репозитории</a>
     <div class="menu-item" onclick="document.getElementById('settingsBox').classList.toggle('d-none')">Настройки</div>
+    <div class="menu-item" onclick="cleanupAptly()">Очистить deb</div>
     <div id="settingsBox" class="pt-3">
         <label class="form-label mb-1">Прокси</label>
         <input id="proxyUrl" class="form-control form-control-sm mb-2" placeholder="http://user:pass@proxy:3128">
@@ -48,26 +49,21 @@
     <div class="row mb-3 align-items-center">
         <div class="col">
             <h2 class="mb-0">Зеркала</h2>
-            <div class="small text-muted">включено {{ mirrors|selectattr('enabled')|list|length }}, с ошибкой {{ mirrors|selectattr('status', 'equalto', 'failed')|list|length }}</div>
+            <div class="small text-muted">Управление зеркалами и их статусами.</div>
         </div>
         <div class="col-auto d-flex flex-wrap gap-2 justify-content-end">
-            <div class="btn-group">
-                <a class="btn btn-outline-primary btn-sm" href="/api/mirrors/export">Экспорт</a>
-                <button class="btn btn-outline-primary btn-sm" onclick="document.getElementById('importFile').click()">Импорт</button>
-            </div>
+            <a class="btn btn-outline-secondary btn-sm" href="/api/mirrors/export">Экспорт</a>
+            <button class="btn btn-outline-secondary btn-sm" onclick="document.getElementById('importFile').click()">Импорт</button>
             <input type="file" id="importFile" accept=".txt,.csv" hidden onchange="importMirrors(this)">
-            <button class="btn btn-outline-danger btn-sm" onclick="cleanupAptly()">Очистить deb</button>
-            <button class="btn btn-primary btn-sm" data-bs-toggle="modal" data-bs-target="#addMirrorModal">Добавить зеркало</button>
+            <button class="btn btn-primary btn-sm" data-bs-toggle="modal" data-bs-target="#addMirrorModal">+ Добавить зеркало</button>
         </div>
     </div>
-    <div class="mb-4 d-flex align-items-center">
-        <div class="btn-group">
-            <button class="btn btn-primary btn-sm filter-btn active" data-filter="all">Все</button>
-            <button class="btn btn-outline-primary btn-sm filter-btn" data-filter="rpm">RPM</button>
-            <button class="btn btn-outline-primary btn-sm filter-btn" data-filter="deb">DEB</button>
-            <button class="btn btn-outline-primary btn-sm filter-btn" data-filter="failed">С ошибкой</button>
-        </div>
-        <input id="mirrorSearch" class="form-control form-control-sm ms-2" style="max-width: 360px" placeholder="поиск по имени">
+    <div class="mb-4 d-flex align-items-center gap-2 flex-wrap">
+        <button class="btn btn-outline-primary btn-sm filter-btn active" data-filter="all">Все</button>
+        <button class="btn btn-outline-secondary btn-sm filter-btn" data-filter="rpm">RPM</button>
+        <button class="btn btn-outline-secondary btn-sm filter-btn" data-filter="deb">DEB</button>
+        <button class="btn btn-outline-secondary btn-sm filter-btn" data-filter="failed">С ошибкой</button>
+        <input id="mirrorSearch" class="form-control form-control-sm ms-2" style="max-width: 420px" placeholder="Поиск зеркал...">
     </div>
 
     <div class="row">
@@ -83,7 +79,8 @@
                         </span>
                     </div>
                     <p class="card-text text-muted small mb-1 text-truncate">{{ m.description or m.distribution or '' }}</p>
-                    <p class="mb-1">Статус: <span class="status-{{ m.status }}" id="status-{{ m.id }}">{{ m.status }}</span> <span class="small text-muted" id="lamp-label-{{ m.id }}">nginx</span></p>
+                    <p class="mb-1"><span class="status-{{ m.status }}" id="status-{{ m.id }}">● {{ m.status }}</span></p>
+                    <p class="small mb-2" id="lamp-label-{{ m.id }}">nginx</p>
                     <p class="small text-muted mb-2" id="progress-{{ m.id }}"></p>
                     {% if m.schedule %}
                     <p class="small text-muted mb-2">Расписание: <span class="cron-human" data-cron="{{ m.schedule }}">{{ m.schedule }}</span></p>
@@ -116,16 +113,34 @@
         {% endfor %}
     </div>
 
-    <hr class="my-5">
-
-    <div class="row mb-4">
+    <hr class="section-split my-5">
+    <div class="row mb-3 align-items-center">
         <div class="col">
-            <h2 id="local">Локальные репозитории</h2>
+            <h2 class="mb-0">Кэш по запросу</h2>
+            <div class="small text-muted">Пакет скачивается только когда его запросил клиент. Это не полное зеркало.</div>
         </div>
         <div class="col-auto">
-            <button class="btn btn-success" data-bs-toggle="modal" data-bs-target="#addLocalRepoModal">
-                + Создать локальный репо
-            </button>
+            <button class="btn btn-primary btn-sm" type="button" onclick="document.getElementById('cacheForm').classList.toggle('d-none')">+ Добавить кэш</button>
+        </div>
+    </div>
+    <form id="cacheForm" class="card card-body mb-3 d-none" onsubmit="return createCache(event)">
+        <div class="row g-2">
+            <div class="col-md-3"><input class="form-control" name="name" placeholder="имя" required></div>
+            <div class="col-md-2"><select class="form-select" name="type"><option value="rpm">rpm</option><option value="deb">deb</option></select></div>
+            <div class="col-md-5"><input class="form-control" name="source_url" placeholder="http://mirror/path" required></div>
+            <div class="col-md-2"><button class="btn btn-primary w-100" type="submit">Создать</button></div>
+        </div>
+    </form>
+    <div class="row" id="cacheList"></div>
+
+    <hr class="section-split my-5">
+    <div class="row mb-4 align-items-center">
+        <div class="col">
+            <h2 id="local" class="mb-0">Локальные репозитории</h2>
+            <div class="small text-muted">Свои пакеты и файлы, без зеркалирования.</div>
+        </div>
+        <div class="col-auto">
+            <button class="btn btn-primary btn-sm" data-bs-toggle="modal" data-bs-target="#addLocalRepoModal">+ Создать локальный репо</button>
         </div>
     </div>
 
@@ -140,11 +155,12 @@
                             {{ r.type | upper }}
                         </span>
                     </div>
-                    <p class="text-muted small">{{ r.description or r.local_path }}</p>
+                    <p class="small text-muted text-truncate">/repo/local/{{ r.type }}/{{ r.name }}/ <button class="btn btn-link btn-sm p-0" type="button" onclick="navigator.clipboard.writeText(location.origin + '/repo/local/{{ r.type }}/{{ r.name }}/')">копировать</button></p>
                     <div class="d-flex flex-wrap gap-2">
-                        <input type="file" id="up-{{ r.id }}" accept=".rpm,.deb" hidden onchange="uploadPkg({{ r.id }}, this)">
+                        <input type="file" id="up-{{ r.id }}" hidden onchange="uploadPkg({{ r.id }}, this)">
                         <button class="btn btn-sm btn-outline-primary" onclick="document.getElementById('up-{{ r.id }}').click()">Загрузить</button>
-                        <button class="btn btn-sm btn-outline-secondary" onclick="showContents({{ r.id }}, '{{ r.name }}', 'local')">Содержимое</button>
+                        <a class="btn btn-sm btn-outline-primary" href="/repo/local/{{ r.type }}/{{ r.name }}/" target="_blank">Открыть</a>
+                        <button class="btn btn-sm btn-outline-primary" onclick="showContents({{ r.id }}, '{{ r.name }}', 'local')">Содержимое</button>
                         <button class="btn btn-sm btn-outline-danger" onclick="deleteLocal({{ r.id }}, '{{ r.name }}')">Удалить</button>
                     </div>
                 </div>
@@ -164,9 +180,61 @@
 </div>
 </div>
 
-<footer class="app-footer border-top text-secondary" style="background:#e7ebef">
+<footer class="app-footer border-top text-secondary">
     <div class="container py-3">Локальный менеджер репозиториев</div>
 </footer>
+
+<div class="modal fade" id="cacheLineModal" tabindex="-1">
+    <div class="modal-dialog">
+        <div class="modal-content">
+            <div class="modal-header">
+                <h5 class="modal-title">Строка для клиента</h5>
+                <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
+            </div>
+            <div class="modal-body">
+                <pre class="mb-0 cache-line" id="cacheLineBody"></pre>
+            </div>
+        </div>
+    </div>
+</div>
+
+<div class="modal fade" id="cacheEditModal" tabindex="-1">
+    <div class="modal-dialog">
+        <div class="modal-content">
+            <form onsubmit="return saveCacheUrl(event)">
+                <div class="modal-header">
+                    <h5 class="modal-title">Ссылка источника</h5>
+                    <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
+                </div>
+                <div class="modal-body">
+                    <input type="hidden" id="cacheEditId">
+                    <label class="form-label">URL источника</label>
+                    <input class="form-control" id="cacheEditUrl" required placeholder="http://mirror/path">
+                </div>
+                <div class="modal-footer">
+                    <button class="btn btn-primary btn-sm" type="submit">Сохранить</button>
+                </div>
+            </form>
+        </div>
+    </div>
+</div>
+
+<div class="modal fade" id="cacheFilesModal" tabindex="-1">
+    <div class="modal-dialog modal-lg">
+        <div class="modal-content">
+            <div class="modal-header">
+                <h5 class="modal-title" id="cacheFilesTitle">Файлы</h5>
+                <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
+            </div>
+            <div class="modal-body">
+                <table class="table table-sm mb-0">
+                    <thead><tr><th>Путь</th><th class="text-end text-nowrap">Размер</th></tr></thead>
+                    <tbody id="cacheFilesBody"></tbody>
+                </table>
+            </div>
+        </div>
+    </div>
+</div>
 
 <div class="modal fade" id="editMirrorModal" tabindex="-1">
     <div class="modal-dialog">
@@ -303,6 +371,7 @@
                         <select class="form-select" name="type">
                             <option value="rpm">RPM</option>
                             <option value="deb">DEB</option>
+                            <option value="files">Файлы</option>
                         </select>
                     </div>
                     <div class="mb-3">
@@ -364,8 +433,10 @@ function toggleMenu() {
 }
 
 fetch('/api/proxy').then(r => r.json()).then(d => {
-    document.getElementById('proxyUrl').value = d.proxy_url || '';
-    document.getElementById('noProxy').value = d.no_proxy || '';
+    const u = document.getElementById('proxyUrl');
+    const n = document.getElementById('noProxy');
+    if (u) u.value = d.proxy_url || '';
+    if (n) n.value = d.no_proxy || '';
 });
 
 fetch('/api/min-free').then(r => r.json()).then(d => {
@@ -445,6 +516,78 @@ async function importMirrors(input) {
     location.reload();
 }
 
+async function createCache(e) {
+    e.preventDefault();
+    const data = Object.fromEntries(new FormData(e.target));
+    const res = await fetch('/api/cache/', {method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify(data)});
+    if (!res.ok) { alert((await res.json()).detail || res.status); return false; }
+    location.reload();
+    return false;
+}
+fetch('/api/cache/').then(r => r.json()).then(rows => {
+    const box = document.getElementById('cacheList');
+    if (!box) return;
+    const nl = String.fromCharCode(10);
+    box.innerHTML = rows.map(r => {
+        const line = r.type === 'rpm'
+            ? '[' + r.name + ']' + nl + 'name=' + r.name + nl + 'baseurl=http://' + location.hostname + '/cache/' + r.name + '/' + nl + 'gpgcheck=0' + nl + 'enabled=1'
+            : 'deb http://' + location.hostname + '/cache/' + r.name + ' ' + (r.distribution || 'bookworm') + ' ' + (r.component || 'main');
+        const safe = line.replace(/</g, '');
+        return '<div class="col-md-6 col-lg-4 mb-3"><div class="card h-100"><div class="card-body"><h5>' + r.name + '</h5><p class="small text-muted">' + r.type + '</p><p class="small text-truncate" title="' + r.source_url + '">источник: ' + r.source_url + '</p><div class="d-flex flex-wrap gap-1"><button class="btn btn-sm btn-outline-primary" type="button" onclick="showCacheLine(' + r.id + ')">Строка</button><button class="btn btn-sm btn-outline-primary" type="button" onclick="copyCache(' + r.id + ')">Копировать</button><button class="btn btn-sm btn-outline-primary" type="button" onclick="downloadCache(' + r.id + ', \'' + r.name + '\', \'' + r.type + '\')">Скачать</button><button class="btn btn-sm btn-outline-primary" type="button" onclick="editCache(' + r.id + ')">Ссылка</button><button class="btn btn-sm btn-outline-primary" type="button" onclick="showCacheFiles(' + r.id + ', \'' + r.name + '\')">Файлы</button></div></div></div></div>';
+    }).join('') || '<div class="col-12 text-muted">Кэшей нет. Пакет скачается при первом запросе клиента.</div>';
+    rows.forEach(r => {
+        const line = r.type === 'rpm'
+            ? '[' + r.name + ']' + nl + 'name=' + r.name + nl + 'baseurl=http://' + location.hostname + '/cache/' + r.name + '/' + nl + 'gpgcheck=0' + nl + 'enabled=1'
+            : 'deb http://' + location.hostname + '/cache/' + r.name + ' ' + (r.distribution || 'bookworm') + ' ' + (r.component || 'main');
+        const node = document.getElementById('cline-' + r.id);
+        if (node) node.textContent = line;
+        window.cacheLines = window.cacheLines || {};
+        window.cacheLines[r.id] = line;
+        window.cacheUrls = window.cacheUrls || {};
+        window.cacheUrls[r.id] = r.source_url;
+    });
+}).catch(() => {});
+function showCacheLine(id) {
+    document.getElementById('cacheLineBody').textContent = window.cacheLines[id] || '';
+    bootstrap.Modal.getOrCreateInstance(document.getElementById('cacheLineModal')).show();
+}
+function copyCache(id) {
+    navigator.clipboard.writeText(window.cacheLines[id] || '');
+}
+function downloadCache(id, name, type) {
+    const text = window.cacheLines[id] || '';
+    const blob = new Blob([text + '\n'], {type: 'text/plain'});
+    const a = document.createElement('a');
+    a.href = URL.createObjectURL(blob);
+    a.download = name + (type === 'rpm' ? '.repo' : '.list');
+    a.click();
+}
+async function editCache(id) {
+    document.getElementById('cacheEditId').value = id;
+    document.getElementById('cacheEditUrl').value = window.cacheUrls[id] || '';
+    bootstrap.Modal.getOrCreateInstance(document.getElementById('cacheEditModal')).show();
+}
+async function saveCacheUrl(e) {
+    e.preventDefault();
+    const id = document.getElementById('cacheEditId').value;
+    const url = document.getElementById('cacheEditUrl').value.trim();
+    const res = await fetch('/api/cache/' + id, {method:'PUT', headers:{'Content-Type':'application/json'}, body: JSON.stringify({source_url: url})});
+    if (!res.ok) { alert((await res.json()).detail || res.status); return false; }
+    location.reload();
+    return false;
+}
+async function showCacheFiles(id, name) {
+    const res = await fetch('/api/cache/' + id + '/files');
+    const data = await res.json();
+    const rows = (data.files || []).map(f => {
+        const mb = f.size / 1024 / 1024;
+        const size = mb >= 1 ? mb.toFixed(1) + ' МБ' : Math.max(1, Math.round(f.size / 1024)) + ' КБ';
+        return '<tr><td class="text-break">' + f.path + '</td><td class="text-end text-nowrap">' + size + '</td></tr>';
+    }).join('');
+    document.getElementById('cacheFilesTitle').textContent = name;
+    document.getElementById('cacheFilesBody').innerHTML = rows || '<tr><td colspan="2">Пока пусто</td></tr>';
+    bootstrap.Modal.getOrCreateInstance(document.getElementById('cacheFilesModal')).show();
+}
 async function cleanupAptly() {
     if (!confirm('Удалить пакеты aptly, на которые не ссылается ни одно зеркало?')) return;
     const res = await fetch('/api/mirrors/cleanup-aptly', {method: 'POST'});
@@ -650,7 +793,7 @@ async function loadContents() {
     const from = total ? data.offset + 1 : 0;
     const to = Math.min(data.offset + (data.packages || []).length, total);
     document.getElementById('contentsMeta').textContent =
-        'Всего ' + total + ', размер ' + mb.toFixed(1) + ' МБ';
+        data.error ? data.error : ('Всего ' + total + ', размер ' + mb.toFixed(1) + ' МБ');
     document.getElementById('pageInfo').textContent = from + '–' + to + ' из ' + total;
     document.getElementById('prevPage').disabled = contentsOffset <= 0;
     document.getElementById('nextPage').disabled = contentsOffset + pageSize >= total;
@@ -661,7 +804,7 @@ async function loadContents() {
             : '';
         return '<div class="border-bottom py-1 d-flex justify-content-between"><span><code>' + p.name + '</code> <span class="text-muted small">' +
             (p.size_bytes / 1024 / 1024).toFixed(2) + ' МБ</span></span>' + del + '</div>';
-    }).join('') || '<div class="text-muted">Пакетов не найдено</div>';
+    }).join('') || '<div class="text-muted">' + (data.error || 'Пакетов не найдено') + '</div>';
 }
 
 function showContents(id, name, kind) {

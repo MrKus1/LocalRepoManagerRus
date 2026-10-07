@@ -1,7 +1,15 @@
 
 body { background: #eef1f4; min-height: 100vh; display: flex; flex-direction: column; }
 .page-main { flex: 1 0 auto; }
-footer.app-footer { margin-top: auto; background: #e7ebef; }
+nav.navbar { background: #fff !important; border-bottom: 3px solid #0d6efd !important; }
+footer.app-footer { margin-top: auto; background: #fff; border-top: 1px solid #dee2e6; }
+.cache-line { white-space: pre; overflow-x: auto; word-break: normal; }
+.card { background: #fff; border-width: 2px !important; border-radius: 12px !important; box-shadow: 0 2px 8px rgba(0,0,0,.06); overflow: hidden; position: relative; }
+.card-idle { border-color: #dee2e6 !important; }
+.card-running { border-color: #0d6efd !important; }
+.card-success { border-color: #198754 !important; }
+.card-failed { border-color: #dc3545 !important; }
+.side-menu { background: #fff; }
 .menu-close { display: inline-flex; align-items: center; justify-content: center; width: 32px; height: 32px; cursor: pointer; font-size: 1.2rem; }
 .reach-lamp { position: absolute; top: 10px; right: 10px; width: 12px; height: 12px; border-radius: 50%; background: #adb5bd; box-shadow: 0 0 6px #adb5bd; }
 .card { position: relative; }
@@ -19,6 +27,10 @@ footer.app-footer { margin-top: auto; background: #e7ebef; }
 .status-failed { color: #dc3545; }
 .badge-deb { background: #a80030; }
 .badge-rpm { background: #e44d26; }
+.filter-btn { white-space: nowrap; border-radius: .5rem !important; background: #fff; }
+.filter-btn.active { background: #e7f1ff; color: #0d6efd; border-color: #9ec5fe; }
+.disk-bar { height: 6px; background: #e9ecef; border-radius: 99px; width: 180px; margin-left: auto; }
+.disk-bar > span { display: block; height: 100%; background: #0d6efd; border-radius: 99px; }
 .side-menu { position: fixed; top: 0; left: 0; height: 100vh; width: 360px; background: #eef1f4; color: #212529; z-index: 1040; transform: translateX(-100%); transition: transform .2s ease; overflow: auto; padding: 1rem; border-right: 1px solid #ced4da; }
 .side-menu.open { transform: translateX(0); }
 .side-backdrop { position: fixed; inset: 0; background: rgba(0,0,0,.25); z-index: 1030; display: none; }

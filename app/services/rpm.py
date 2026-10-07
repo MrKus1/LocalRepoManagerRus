@@ -59,9 +59,10 @@ class RpmService:
         dest.mkdir(parents=True, exist_ok=True)
 
         cmd = [
-            "dnf", "reposync",
-            "--download-metadata",
+            "dnf",
             "--exclude=*.src.rpm",
+            "reposync",
+            "--download-metadata",
             "-p", str(dest.parent),
         ]
         if newest_only:

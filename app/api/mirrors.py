@@ -251,6 +251,7 @@ async def mirror_contents(
             "aptly", "mirror", "show", "-with-packages", mirror.name
         ])
         if code != 0:
+            busy = "database" in (err or out).lower() or "lock" in (err or out).lower() or "open database" in (err or out).lower()
             return {
                 "mirror_id": mirror_id,
                 "path": "aptly",
@@ -259,7 +260,7 @@ async def mirror_contents(
                 "limit": limit,
                 "size_bytes": 0,
                 "packages": [],
-                "error": (err or out)[:300],
+                "error": "база занята синхронизацией" if busy else (err or out)[:300],
             }
         names = []
         for line in out.splitlines():

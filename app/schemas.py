@@ -50,7 +50,7 @@ class MirrorOut(MirrorBase):
 
 class LocalRepoBase(BaseModel):
     name: str = Field(..., min_length=1, max_length=100)
-    type: str = Field(..., pattern="^(deb|rpm)$")
+    type: str = Field(..., pattern="^(deb|rpm|files)$")
     description: Optional[str] = None
     distribution: Optional[str] = None
     component: Optional[str] = "main"

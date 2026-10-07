@@ -14,9 +14,9 @@ from sqlalchemy import select, update
 from app.config import settings
 from app.services.proxy import load_proxy, save_proxy, load_min_free_gb, save_min_free_gb, load_min_free_gb, save_min_free_gb
 from app.database import init_db, get_db, AsyncSessionLocal
-from app.models import Mirror, LocalRepo, SyncLog, SyncStatus
+from app.models import Mirror, LocalRepo, SyncLog, SyncStatus, CacheRepo
 from app.services.scheduler import start_scheduler, stop_scheduler
-from app.api import mirrors, sync, packages
+from app.api import mirrors, sync, packages, cache
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
@@ -34,6 +34,7 @@ async def lifespan(app: FastAPI):
         settings.LOCAL_REPOS_DIR,
         settings.UPLOADS_DIR,
         settings.LOGS_DIR,
+        settings.STORAGE_ROOT / "cache",
     ]:
         Path(d).mkdir(parents=True, exist_ok=True)
     
@@ -72,6 +73,8 @@ app = FastAPI(
 app.include_router(mirrors.router)
 app.include_router(sync.router)
 app.include_router(packages.router)
+app.include_router(cache.router)
+app.include_router(cache.serve)
 
 # Static & Templates
 BASE_DIR = Path(__file__).resolve().parent

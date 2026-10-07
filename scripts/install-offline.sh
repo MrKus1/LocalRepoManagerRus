@@ -182,7 +182,7 @@ Group=$SERVICE_USER
 WorkingDirectory=$INSTALL_DIR
 Environment=PATH=$INSTALL_DIR/venv/bin:/usr/local/bin:/usr/bin
 EnvironmentFile=$INSTALL_DIR/.env
-ExecStart=$INSTALL_DIR/venv/bin/uvicorn app.main:app --host 0.0.0.0 --port 8000
+ExecStart=$INSTALL_DIR/venv/bin/uvicorn app.main:app --host 127.0.0.1 --port 8000
 Restart=always
 RestartSec=5
 LimitNOFILE=65536
@@ -211,6 +211,6 @@ if grep -E 'ident|peer' /var/lib/pgsql/data/pg_hba.conf 2>/dev/null | grep -v '^
 else
   echo "pg_hba.conf: ident/peer не найден."
 fi
-echo "Интерфейс: http://$(hostname -I | awk '{print $1}'):8000"
+echo "Интерфейс: http://$(hostname -I | awk '{print $1}')/  (nginx, приложение только на 127.0.0.1:8000)"
 echo "Пакеты:    http://$(hostname -I | awk '{print $1}')/repo/rpm/ и /repo/deb/"
 echo "Запуск:    systemctl start repo-manager"

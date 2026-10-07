@@ -9,7 +9,7 @@
 </head>
 <body>
 <div class="page-main">
-<nav class="navbar border-bottom mb-4" style="background:#e7ebef">
+<nav class="navbar border-bottom mb-4">
     <div class="container">
         <span class="menu-link" onclick="toggleMenu()" title="Меню"><i></i><i></i><i></i></span>
         <a class="navbar-brand mb-0" href="/">Менеджер репозиториев</a>
@@ -128,8 +128,10 @@ fetch('/api/mirrors/' + id + '/client-check').then(r => r.json()).then(d => {
     lamp.title = d.ok ? 'nginx отдаёт' : 'nginx не отдаёт ' + (d.http_code || '');
 });
 fetch('/api/disk').then(r => r.json()).then(d => {
+    const el = document.getElementById('diskInfo');
+    if (!el) return;
     const gb = n => (n / 1024 / 1024 / 1024).toFixed(1) + ' ГБ';
-    document.getElementById('diskInfo').textContent = 'диск ' + gb(d.used_bytes) + ' занято, ' + gb(d.free_bytes) + ' свободно';
+    el.textContent = 'диск ' + gb(d.used_bytes) + ' занято, ' + gb(d.free_bytes) + ' свободно';
 });
 setInterval(async () => {
     const res = await fetch('/api/sync/' + id + '/progress');

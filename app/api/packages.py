@@ -48,7 +48,7 @@ async def create_local_repo(data: LocalRepoCreate, db: AsyncSession = Depends(ge
         ok, msg = await deb_service.create_local_repo(data.name)
         if not ok:
             raise HTTPException(status_code=500, detail=f"aptly error: {msg}")
-    else:
+    elif data.type == "rpm":
         ok, msg = await rpm_service.create_local_repo(str(local_path))
         if not ok:
             raise HTTPException(status_code=500, detail=f"createrepo error: {msg}")
@@ -80,11 +80,11 @@ async def local_repo_contents(
         raise HTTPException(status_code=404, detail="Репозиторий не найден")
 
     root = Path(repo.local_path)
-    suffix = ".rpm" if repo.type == "rpm" else ".deb"
+    suffix = ".rpm" if repo.type == "rpm" else ".deb" if repo.type == "deb" else ""
     matched = []
     size = 0
     if root.exists():
-        for path in root.rglob(f"*{suffix}"):
+        for path in (root.rglob("*") if not suffix else root.rglob(f"*{suffix}")):
             if not path.is_file():
                 continue
             size += path.stat().st_size
@@ -130,7 +130,7 @@ async def delete_package(repo_id: int, filename: str, db: AsyncSession = Depends
         ok, msg = await rpm_service.update_metadata(str(root))
         if not ok:
             raise HTTPException(status_code=500, detail=msg[:500])
-    else:
+    elif repo.type == "deb":
         name = filename.rsplit(".", 1)[0]
         await deb_service.run_check([deb_service.aptly, "repo", "remove", repo.name, name])
     result = await db.execute(select(Package).where(Package.repo_id == repo.id, Package.filename == filename))
@@ -189,6 +189,8 @@ async def upload_package(
         raise HTTPException(status_code=400, detail="Ожидается .deb файл")
     if repo.type == "rpm" and not filename.endswith(".rpm"):
         raise HTTPException(status_code=400, detail="Ожидается .rpm файл")
+    if repo.type == "files" and ("/" in filename or ".." in filename):
+        raise HTTPException(status_code=400, detail="Некорректное имя файла")
 
     # Сохраняем во временную папку
     upload_dir = settings.UPLOADS_DIR
@@ -215,11 +217,16 @@ async def upload_package(
                 component=repo.component or "main",
                 architectures=repo.architectures or "amd64",
             )
-    else:
+    elif repo.type == "rpm":
         ok, msg = await rpm_service.add_package(repo.local_path, str(temp_path))
         if not ok:
             temp_path.unlink(missing_ok=True)
             raise HTTPException(status_code=500, detail=f"rpm add failed: {msg}")
+    else:
+        dest = Path(repo.local_path)
+        dest.mkdir(parents=True, exist_ok=True)
+        shutil.copy2(temp_path, dest / filename)
+        temp_path.unlink(missing_ok=True)
 
     # Парсим имя/версию грубо (можно улучшить через python-debian / rpm)
     name_part = filename.rsplit(".", 1)[0]

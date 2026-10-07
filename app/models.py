@@ -88,6 +88,20 @@ class LocalRepo(Base):
         return f"<LocalRepo {self.name} ({self.type})>"
 
 
+class CacheRepo(Base):
+    """Кэш по запросу, не полное зеркало."""
+    __tablename__ = "cache_repos"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, index=True)
+    name: Mapped[str] = mapped_column(String(100), unique=True, index=True)
+    type: Mapped[str] = mapped_column(String(10))
+    source_url: Mapped[str] = mapped_column(String(500))
+    distribution: Mapped[Optional[str]] = mapped_column(String(50), nullable=True)
+    component: Mapped[Optional[str]] = mapped_column(String(50), nullable=True)
+    architectures: Mapped[Optional[str]] = mapped_column(String(100), nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
+
+
 class Package(Base):
     """Загруженные свои пакеты"""
     __tablename__ = "packages"
