@@ -9,7 +9,7 @@ from sqlalchemy import select
 
 from app.database import AsyncSessionLocal
 from app.models import Mirror, SyncStatus
-from app.api.sync import _do_sync
+from app.api.cache import cleanup_cache, load_cleanup
 from app.services.procs import get_process
 from app.services.proxy import sync_blocked
 
@@ -72,6 +72,18 @@ async def _tick():
         _fired.add(key)
         logger.info("Плановый sync %s", mirror.name)
         asyncio.create_task(_do_sync(mirror.id))
+    cleanup = load_cleanup()
+    expr = (cleanup.get("cron") or "").strip()
+    days = str(cleanup.get("days") or "").strip()
+    if expr and days.isdigit():
+        try:
+            if croniter.match(expr, now):
+                key = ("cache-cleanup", now.isoformat())
+                if key not in _fired:
+                    _fired.add(key)
+                    logger.info("Очистка кэша: %s", cleanup_cache(int(days)))
+        except Exception:
+            logger.warning("Плохой cron очистки кэша: %s", expr)
 
 
 async def _loop():

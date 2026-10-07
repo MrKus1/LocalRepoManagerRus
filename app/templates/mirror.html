@@ -13,7 +13,7 @@
     <div class="container">
         <span class="menu-link" onclick="toggleMenu()" title="Меню"><i></i><i></i><i></i></span>
         <a class="navbar-brand mb-0" href="/">Менеджер репозиториев</a>
-        <span class="navbar-text" id="diskInfo">диск: …</span>
+        <span class="navbar-text text-end"><span id="diskInfo">диск: …</span><div class="disk-bar mt-1"><span id="diskBar" style="width:0"></span></div></span>
     </div>
 </nav>
 <div class="side-backdrop" id="sideBackdrop" onclick="toggleMenu()"></div>
@@ -132,6 +132,12 @@ fetch('/api/disk').then(r => r.json()).then(d => {
     if (!el) return;
     const gb = n => (n / 1024 / 1024 / 1024).toFixed(1) + ' ГБ';
     el.textContent = 'диск ' + gb(d.used_bytes) + ' занято, ' + gb(d.free_bytes) + ' свободно';
+    const bar = document.getElementById('diskBar');
+    if (bar && d.total_bytes) {
+        const pct = d.used_bytes / d.total_bytes * 100;
+        bar.style.width = Math.min(100, pct).toFixed(0) + '%';
+        bar.className = pct < 70 ? 'disk-ok' : pct < 91 ? 'disk-warn' : 'disk-full';
+    }
 });
 setInterval(async () => {
     const res = await fetch('/api/sync/' + id + '/progress');

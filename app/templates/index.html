@@ -25,24 +25,13 @@
     </div>
     <a href="/">Зеркала</a>
     <a href="/#local">Локальные репозитории</a>
-    <div class="menu-item" onclick="document.getElementById('settingsBox').classList.toggle('d-none')">Настройки</div>
+    <div class="menu-item" onclick="document.getElementById('settingsTree').classList.toggle('d-none')">Настройки</div>
+    <div id="settingsTree" class="d-none">
+        <div class="menu-sub" onclick="openSettings('proxyModal')">Прокси</div>
+        <div class="menu-sub" onclick="openSettings('diskModal')">Место</div>
+        <div class="menu-sub" onclick="openSettings('tasksModal')">Tasks</div>
+    </div>
     <div class="menu-item" onclick="cleanupAptly()">Очистить deb</div>
-    <div id="settingsBox" class="pt-3">
-        <label class="form-label mb-1">Прокси</label>
-        <input id="proxyUrl" class="form-control form-control-sm mb-2" placeholder="http://user:pass@proxy:3128">
-        <label class="form-label mb-1">Не проксировать</label>
-        <input id="noProxy" class="form-control form-control-sm mb-2" placeholder="127.0.0.1,localhost">
-        <button class="btn btn-sm btn-outline-secondary" type="button" onclick="saveProxy()">Сохранить прокси</button>
-    </div>
-    <div class="mt-3">
-        <label class="form-label mb-1">Минимум свободно, ГБ</label>
-        <div class="input-group input-group-sm">
-            <input id="minFree" class="form-control" placeholder="пусто = без лимита">
-            <button class="btn btn-outline-secondary" type="button" onclick="saveMinFree()">Сохранить</button>
-        </div>
-        <p class="small text-muted mt-2 mb-0">Пустой порог — без ограничения. Новый sync не стартует, если свободно меньше этого значения.</p>
-    </div>
-    </div>
 </aside>
 
 <div class="container">
@@ -183,6 +172,51 @@
 <footer class="app-footer border-top text-secondary">
     <div class="container py-3">Локальный менеджер репозиториев</div>
 </footer>
+
+<div class="modal fade" id="proxyModal" tabindex="-1">
+    <div class="modal-dialog">
+        <div class="modal-content">
+            <div class="modal-header"><h5 class="modal-title">Прокси</h5><button type="button" class="btn-close" data-bs-dismiss="modal"></button></div>
+            <div class="modal-body">
+                <label class="form-label">Прокси</label>
+                <input id="proxyUrl" class="form-control mb-3" placeholder="http://user:pass@proxy:3128">
+                <label class="form-label">Не проксировать</label>
+                <input id="noProxy" class="form-control" placeholder="127.0.0.1,localhost">
+            </div>
+            <div class="modal-footer"><button class="btn btn-primary btn-sm" type="button" onclick="saveProxy()">Сохранить</button></div>
+        </div>
+    </div>
+</div>
+<div class="modal fade" id="diskModal" tabindex="-1">
+    <div class="modal-dialog">
+        <div class="modal-content">
+            <div class="modal-header"><h5 class="modal-title">Место</h5><button type="button" class="btn-close" data-bs-dismiss="modal"></button></div>
+            <div class="modal-body">
+                <label class="form-label">Минимум свободно, ГБ</label>
+                <input id="minFree" class="form-control" placeholder="пусто = без лимита">
+                <p class="small text-muted mt-2 mb-0">Пустой порог — без ограничения. Новый sync не стартует, если свободно меньше.</p>
+            </div>
+            <div class="modal-footer"><button class="btn btn-primary btn-sm" type="button" onclick="saveMinFree()">Сохранить</button></div>
+        </div>
+    </div>
+</div>
+<div class="modal fade" id="tasksModal" tabindex="-1">
+    <div class="modal-dialog">
+        <div class="modal-content">
+            <div class="modal-header"><h5 class="modal-title">Tasks</h5><button type="button" class="btn-close" data-bs-dismiss="modal"></button></div>
+            <div class="modal-body">
+                <label class="form-label">Очистка кэша, cron</label>
+                <input id="cacheCron" class="form-control mb-3" placeholder="0 4 * * *">
+                <label class="form-label">Удалять файлы старше, дней</label>
+                <input id="cacheDays" class="form-control" placeholder="14">
+            </div>
+            <div class="modal-footer">
+                <button class="btn btn-outline-primary btn-sm" type="button" onclick="runCacheCleanup()">Очистить сейчас</button>
+                <button class="btn btn-primary btn-sm" type="button" onclick="saveCacheCleanup()">Сохранить</button>
+            </div>
+        </div>
+    </div>
+</div>
 
 <div class="modal fade" id="cacheLineModal" tabindex="-1">
     <div class="modal-dialog">
@@ -427,11 +461,38 @@ function toggleMenu() {
 function fmtGb(n) {
     return (n / 1024 / 1024 / 1024).toFixed(1) + ' ГБ';
 }
+function openSettings(id) {
+    bootstrap.Modal.getOrCreateInstance(document.getElementById(id)).show();
+}
 function toggleMenu() {
     document.getElementById('sideMenu').classList.toggle('open');
     document.getElementById('sideBackdrop').classList.toggle('show');
 }
 
+fetch('/api/cache/cleanup').then(r => r.json()).then(d => {
+    const c = document.getElementById('cacheCron');
+    const n = document.getElementById('cacheDays');
+    if (c) c.value = d.cron || '';
+    if (n) n.value = d.days || '';
+}).catch(() => {});
+async function saveCacheCleanup() {
+    const res = await fetch('/api/cache/cleanup', {
+        method: 'PUT',
+        headers: {'Content-Type': 'application/json'},
+        body: JSON.stringify({
+            cron: document.getElementById('cacheCron').value,
+            days: document.getElementById('cacheDays').value
+        })
+    });
+    if (!res.ok) { alert((await res.json()).detail || res.status); return; }
+    alert('Очистка сохранена');
+}
+async function runCacheCleanup() {
+    const res = await fetch('/api/cache/cleanup/run', {method: 'POST'});
+    const data = await res.json().catch(() => ({}));
+    if (!res.ok) { alert(data.detail || res.status); return; }
+    alert('Удалено файлов: ' + (data.removed || 0));
+}
 fetch('/api/proxy').then(r => r.json()).then(d => {
     const u = document.getElementById('proxyUrl');
     const n = document.getElementById('noProxy');
@@ -469,6 +530,11 @@ async function saveMinFree() {
 fetch('/api/disk').then(r => r.json()).then(d => {
     document.getElementById('diskInfo').textContent =
         'диск ' + fmtGb(d.used_bytes) + ' занято, ' + fmtGb(d.free_bytes) + ' свободно из ' + fmtGb(d.total_bytes);
+    const bar = document.getElementById('diskBar');
+    if (!bar || !d.total_bytes) return;
+    const pct = d.used_bytes / d.total_bytes * 100;
+    bar.style.width = Math.min(100, pct).toFixed(0) + '%';
+    bar.className = pct < 70 ? 'disk-ok' : pct < 91 ? 'disk-warn' : 'disk-full';
 }).catch(() => {
     document.getElementById('diskInfo').textContent = 'диск: нет данных';
 });

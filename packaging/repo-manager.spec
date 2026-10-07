@@ -1,5 +1,5 @@
 Name:           repo-manager
-Version:        0.9.3
+Version:        1.0.0
 Release:        1%{?dist}
 Summary:        Local deb/rpm mirror manager
 License:        MIT

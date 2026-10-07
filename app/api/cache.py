@@ -10,7 +10,10 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.config import settings
 from app.database import get_db
 from app.models import CacheRepo
-from app.services.proxy import load_proxy
+import json
+import time
+
+from app.services.proxy import load_proxy, save_proxy
 
 router = APIRouter(prefix="/api/cache", tags=["cache"])
 serve = APIRouter(tags=["cache-serve"])
@@ -28,6 +31,65 @@ def _root(name: str) -> Path:
 def _allowed(rel: str) -> bool:
     name = Path(rel).name
     return name in _NAMES or name.endswith(_ALLOWED)
+
+
+def cleanup_cache(days: int) -> dict:
+    root = settings.STORAGE_ROOT / "cache"
+    if not root.exists() or days <= 0:
+        return {"removed": 0, "bytes": 0}
+    cutoff = time.time() - days * 86400
+    removed = 0
+    freed = 0
+    for path in root.rglob("*"):
+        if not path.is_file():
+            continue
+        if path.stat().st_mtime >= cutoff:
+            continue
+        freed += path.stat().st_size
+        path.unlink()
+        removed += 1
+    return {"removed": removed, "bytes": freed}
+
+
+def load_cleanup() -> dict:
+    path = Path("/var/lib/repo-manager/proxy.json")
+    if not path.exists():
+        return {"cron": "", "days": ""}
+    try:
+        data = json.loads(path.read_text())
+    except (OSError, json.JSONDecodeError):
+        return {"cron": "", "days": ""}
+    return {"cron": data.get("cache_cleanup_cron") or "", "days": data.get("cache_max_age_days") or ""}
+
+
+@router.get("/cleanup")
+async def get_cleanup():
+    return load_cleanup()
+
+
+@router.put("/cleanup")
+async def put_cleanup(payload: dict):
+    data = load_proxy()
+    cron = (payload.get("cron") or "").strip()
+    days = str(payload.get("days") or "").strip()
+    if cron:
+        from croniter import croniter
+        if not croniter.is_valid(cron):
+            raise HTTPException(status_code=400, detail="Неверный cron")
+    if days and not days.isdigit():
+        raise HTTPException(status_code=400, detail="Дни должны быть числом")
+    saved = save_proxy(data.get("proxy_url") or "", data.get("no_proxy") or "")
+    raw = json.loads(Path("/var/lib/repo-manager/proxy.json").read_text())
+    raw["cache_cleanup_cron"] = cron
+    raw["cache_max_age_days"] = days
+    Path("/var/lib/repo-manager/proxy.json").write_text(json.dumps(raw))
+    return {"cron": cron, "days": days, "proxy_url": saved.get("proxy_url", "")}
+
+
+@router.post("/cleanup/run")
+async def run_cleanup():
+    days = int(load_cleanup().get("days") or 14)
+    return cleanup_cache(days)
 
 
 @router.get("/")
