@@ -3,39 +3,10 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Repo Manager</title>
+    <title>Менеджер репозиториев</title>
     <link href="/static/css/bootstrap.min.css" rel="stylesheet">
+    <link href="/static/css/app.css" rel="stylesheet">
     <script src="/static/js/htmx.min.js"></script>
-    <style>
-        body { background: #f5f6fa; min-height: 100vh; display: flex; flex-direction: column; }
-        .page-main { flex: 1 0 auto; }
-        footer.app-footer { margin-top: auto; }
-        .reach-lamp { position: absolute; top: 10px; right: 10px; width: 12px; height: 12px; border-radius: 50%; background: #adb5bd; box-shadow: 0 0 6px #adb5bd; }
-        .card { position: relative; }
-        .lamp-green { background: #198754; box-shadow: 0 0 8px #198754; }
-        .lamp-red { background: #dc3545; box-shadow: 0 0 8px #dc3545; }
-        .lamp-yellow { background: #ffc107; box-shadow: 0 0 8px #ffc107; }
-        .card { position: relative; }
-        .card-idle { border-color: #dee2e6; }
-        .card-running { border-color: #0d6efd; }
-        .card-success { border-color: #198754; }
-        .card-failed { border-color: #dc3545; }
-        .err-line { cursor: pointer; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
-        .status-idle { color: #6c757d; }
-        .status-running { color: #0d6efd; }
-        .status-success { color: #198754; }
-        .status-failed { color: #dc3545; }
-        .badge-deb { background: #a80030; }
-        .badge-rpm { background: #e44d26; }
-        footer.app-footer { margin-top: 2rem; }
-        .side-menu { position: fixed; top: 0; left: 0; height: 100vh; width: 360px; background: #eef1f4; color: #212529; z-index: 1040; transform: translateX(-100%); transition: transform .2s ease; overflow: auto; padding: 1rem; border-right: 1px solid #ced4da; }
-        .side-menu.open { transform: translateX(0); }
-        .side-backdrop { position: fixed; inset: 0; background: rgba(0,0,0,.25); z-index: 1030; display: none; }
-        .side-backdrop.show { display: block; }
-        .side-menu a, .side-menu .menu-item { display: block; color: #212529; text-decoration: none; padding: .7rem 0; border-bottom: 1px solid #ced4da; cursor: pointer; }
-        .menu-link { display: inline-block; width: 32px; height: 28px; cursor: pointer; }
-        .menu-link i { display: block; height: 2px; margin: 6px 0; background: #343a40; }
-    </style>
 </head>
 <body>
 <div class="page-main">
@@ -50,9 +21,10 @@
 <aside class="side-menu" id="sideMenu">
     <div class="d-flex justify-content-between align-items-center mb-3">
         <strong>Меню</strong>
-        <span class="menu-link" onclick="toggleMenu()">←</span>
+        <span class="menu-close" onclick="toggleMenu()">←</span>
     </div>
     <a href="/">Зеркала</a>
+    <a href="/#local">Локальные репозитории</a>
     <div class="menu-item" onclick="document.getElementById('settingsBox').classList.toggle('d-none')">Настройки</div>
     <div id="settingsBox" class="pt-3">
         <label class="form-label mb-1">Прокси</label>
@@ -79,11 +51,13 @@
             <div class="small text-muted">включено {{ mirrors|selectattr('enabled')|list|length }}, с ошибкой {{ mirrors|selectattr('status', 'equalto', 'failed')|list|length }}</div>
         </div>
         <div class="col-auto d-flex flex-wrap gap-2 justify-content-end">
-            <a class="btn btn-outline-primary btn-sm" href="/api/mirrors/export">Экспорт</a>
+            <div class="btn-group">
+                <a class="btn btn-outline-primary btn-sm" href="/api/mirrors/export">Экспорт</a>
+                <button class="btn btn-outline-primary btn-sm" onclick="document.getElementById('importFile').click()">Импорт</button>
+            </div>
             <input type="file" id="importFile" accept=".txt,.csv" hidden onchange="importMirrors(this)">
-            <button class="btn btn-outline-success btn-sm" onclick="document.getElementById('importFile').click()">Импорт</button>
-            <button class="btn btn-outline-secondary btn-sm" onclick="cleanupAptly()">Очистить deb</button>
-            <button class="btn btn-primary btn-sm" data-bs-toggle="modal" data-bs-target="#addMirrorModal">+ Добавить зеркало</button>
+            <button class="btn btn-outline-danger btn-sm" onclick="cleanupAptly()">Очистить deb</button>
+            <button class="btn btn-primary btn-sm" data-bs-toggle="modal" data-bs-target="#addMirrorModal">Добавить зеркало</button>
         </div>
     </div>
     <div class="mb-4 d-flex align-items-center">
@@ -93,7 +67,7 @@
             <button class="btn btn-outline-primary btn-sm filter-btn" data-filter="deb">DEB</button>
             <button class="btn btn-outline-primary btn-sm filter-btn" data-filter="failed">С ошибкой</button>
         </div>
-        <input id="mirrorSearch" class="form-control form-control-sm ms-2" style="width: 220px" placeholder="поиск по имени">
+        <input id="mirrorSearch" class="form-control form-control-sm ms-2" style="max-width: 360px" placeholder="поиск по имени">
     </div>
 
     <div class="row">
@@ -109,8 +83,8 @@
                         </span>
                     </div>
                     <p class="card-text text-muted small mb-1 text-truncate">{{ m.description or m.distribution or '' }}</p>
-                    <p class="mb-1">Статус: <span class="status-{{ m.status }}" id="status-{{ m.id }}">{{ m.status }}</span></p>
-                    <p class="small text-muted mb-2" id="progress-{{ m.id }}">{% if m.size_bytes %}{{ (m.size_bytes / 1024 / 1024 / 1024)|round(2) }} ГБ{% else %}размер появится во время sync{% endif %}</p>
+                    <p class="mb-1">Статус: <span class="status-{{ m.status }}" id="status-{{ m.id }}">{{ m.status }}</span> <span class="small text-muted" id="lamp-label-{{ m.id }}">nginx</span></p>
+                    <p class="small text-muted mb-2" id="progress-{{ m.id }}"></p>
                     {% if m.schedule %}
                     <p class="small text-muted mb-2">Расписание: <span class="cron-human" data-cron="{{ m.schedule }}">{{ m.schedule }}</span></p>
                     {% endif %}
@@ -146,7 +120,7 @@
 
     <div class="row mb-4">
         <div class="col">
-            <h2>Локальные репозитории (свои пакеты)</h2>
+            <h2 id="local">Локальные репозитории</h2>
         </div>
         <div class="col-auto">
             <button class="btn btn-success" data-bs-toggle="modal" data-bs-target="#addLocalRepoModal">
@@ -379,6 +353,7 @@ function toggleMenu() {
 }
 </script>
 <script src="/static/js/bootstrap.bundle.min.js"></script>
+<script src="/static/js/app.js"></script>
 <script>
 function fmtGb(n) {
     return (n / 1024 / 1024 / 1024).toFixed(1) + ' ГБ';
@@ -488,7 +463,7 @@ document.querySelectorAll('.reach-lamp').forEach(async el => {
     el.className = 'reach-lamp ' + (data.ok ? 'lamp-green' : 'lamp-red');
     el.title = data.ok ? 'nginx отдал 200' : 'nginx не отдал репозиторий';
     const label = document.getElementById('lamp-label-' + el.dataset.id);
-    if (label) label.textContent = data.ok ? 'nginx 200' : 'nginx нет';
+    if (label) label.textContent = data.ok ? 'nginx : OK' : 'nginx : нет';
 });
 
 document.getElementById('mirrorSearch').addEventListener('input', (e) => {
@@ -541,18 +516,17 @@ async function pollProgress() {
         node.dataset.live = data.status === 'running' ? '1' : '';
         const bar = document.getElementById('bar-' + id);
         const label = document.getElementById('progress-' + id);
-        const gb = (data.size_bytes / 1024 / 1024 / 1024).toFixed(2);
         if (data.percent !== null && data.percent !== undefined) {
             bar.style.width = data.percent + '%';
-            label.textContent = data.percent + '% · ' + data.files + ' пакетов · ' + gb + ' ГБ';
+            label.textContent = data.percent + '% · ' + data.files + ' пакетов';
         } else if (data.status === 'running') {
             bar.style.width = '100%';
             bar.classList.add('progress-bar-striped', 'progress-bar-animated');
-            label.textContent = 'идёт синхронизация · ' + data.files + ' пакетов · ' + gb + ' ГБ';
+            label.textContent = 'идёт синхронизация · ' + data.files + ' пакетов';
         } else {
             bar.style.width = data.status === 'success' ? '100%' : '0%';
             bar.classList.remove('progress-bar-animated');
-            label.textContent = data.files + ' пакетов · ' + gb + ' ГБ';
+            label.textContent = data.files ? (data.files + ' пакетов') : '';
         }
     }
 }

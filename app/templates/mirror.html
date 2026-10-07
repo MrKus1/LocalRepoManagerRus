@@ -3,25 +3,9 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>{{ mirror.name }} — Repo Manager</title>
+    <title>{{ mirror.name }} — Менеджер репозиториев</title>
     <link href="/static/css/bootstrap.min.css" rel="stylesheet">
-    <style>
-        body { background: #f5f6fa; min-height: 100vh; display: flex; flex-direction: column; }
-        .page-main { flex: 1 0 auto; }
-        .card { box-shadow: 0 2px 8px rgba(0,0,0,.08); border-width: 2px; }
-        pre { white-space: pre-wrap; }
-        footer.app-footer { margin-top: auto; }
-        .reach-lamp { display: inline-block; width: 12px; height: 12px; border-radius: 50%; background: #adb5bd; }
-        .lamp-green { background: #198754; }
-        .lamp-red { background: #dc3545; }
-        .side-menu { position: fixed; top: 0; left: 0; height: 100vh; width: 360px; background: #eef1f4; color: #212529; z-index: 1040; transform: translateX(-100%); transition: transform .2s ease; overflow: auto; padding: 1rem; border-right: 1px solid #ced4da; }
-        .side-menu.open { transform: translateX(0); }
-        .side-backdrop { position: fixed; inset: 0; background: rgba(0,0,0,.25); z-index: 1030; display: none; }
-        .side-backdrop.show { display: block; }
-        .side-menu a, .side-menu .menu-item { display: block; color: #212529; text-decoration: none; padding: .7rem 0; border-bottom: 1px solid #ced4da; cursor: pointer; }
-        .menu-link { display: inline-block; width: 32px; height: 28px; cursor: pointer; }
-        .menu-link i { display: block; height: 2px; margin: 6px 0; background: #343a40; }
-    </style>
+    <link href="/static/css/app.css" rel="stylesheet">
 </head>
 <body>
 <div class="page-main">
@@ -36,9 +20,10 @@
 <aside class="side-menu" id="sideMenu">
     <div class="d-flex justify-content-between align-items-center mb-3">
         <strong>Меню</strong>
-        <span class="menu-link" onclick="toggleMenu()">←</span>
+        <span class="menu-close" onclick="toggleMenu()">←</span>
     </div>
     <a href="/">Зеркала</a>
+    <a href="/#local">Локальные репозитории</a>
     <div class="menu-item" onclick="document.getElementById('settingsBox').classList.toggle('d-none')">Настройки</div>
     <div id="settingsBox" class="pt-3">
         <label class="form-label mb-1">Прокси</label>
@@ -53,9 +38,9 @@
     </div>
 </aside>
 <div class="container mb-4">
-    <a class="btn btn-outline-secondary mb-3" href="/">← Назад к зеркалам</a>
+    <a class="text-decoration-none" href="/">← К зеркалам</a>
     <div class="d-flex justify-content-between align-items-center mb-3">
-        <h2 class="mb-0">{{ mirror.name }} <span class="badge bg-secondary">{{ mirror.type | upper }}</span></h2>
+        <h2 class="mb-0">{{ mirror.name }} <span class="badge {% if mirror.type == 'deb' %}badge-deb{% else %}badge-rpm{% endif %}">{{ mirror.type | upper }}</span></h2>
         <span>{{ mirror.status }}</span>
     </div>
     <div class="row g-3">
@@ -127,28 +112,9 @@
 <footer class="app-footer border-top text-secondary" style="background:#e7ebef">
     <div class="container py-3">Локальный менеджер репозиториев</div>
 </footer>
-<script>
-function toggleMenu() {
-    document.getElementById('sideMenu').classList.toggle('open');
-    document.getElementById('sideBackdrop').classList.toggle('show');
-}
-</script>
 <script src="/static/js/bootstrap.bundle.min.js"></script>
+<script src="/static/js/app.js"></script>
 <script>
-function toggleMenu() {
-    document.getElementById('sideMenu').classList.toggle('open');
-    document.getElementById('sideBackdrop').classList.toggle('show');
-}
-async function saveProxy() {
-    await fetch('/api/proxy', {method:'PUT', headers:{'Content-Type':'application/json'}, body: JSON.stringify({proxy_url: document.getElementById('proxyUrl').value, no_proxy: document.getElementById('noProxy').value})});
-    alert('Прокси сохранён');
-}
-async function saveMinFree() {
-    await fetch('/api/min-free', {method:'PUT', headers:{'Content-Type':'application/json'}, body: JSON.stringify({min_free_gb: document.getElementById('minFree').value})});
-    alert('Порог сохранён');
-}
-fetch('/api/proxy').then(r => r.json()).then(d => { document.getElementById('proxyUrl').value = d.proxy_url || ''; document.getElementById('noProxy').value = d.no_proxy || ''; });
-fetch('/api/min-free').then(r => r.json()).then(d => { document.getElementById('minFree').value = d.min_free_gb || ''; });
 const id = {{ mirror.id }};
 fetch('/api/mirrors/' + id + '/client-check').then(r => r.json()).then(d => {
     const lamp = document.getElementById('lamp');

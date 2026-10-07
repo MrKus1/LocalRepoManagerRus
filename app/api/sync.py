@@ -21,6 +21,17 @@ router = APIRouter(prefix="/api/sync", tags=["sync"])
 _count_cache = {}
 
 
+def _du_bytes(root: Path) -> int:
+    if not root.exists():
+        return 0
+    try:
+        import subprocess
+        out = subprocess.check_output(["du", "-sb", str(root)], text=True, timeout=120)
+        return int(out.split()[0])
+    except (OSError, subprocess.SubprocessError, ValueError, IndexError):
+        return 0
+
+
 def _count_packages(root: Path, suffix: str):
     now = datetime.utcnow().timestamp()
     key = str(root)
@@ -28,20 +39,14 @@ def _count_packages(root: Path, suffix: str):
     if cached and now - cached[0] < 60:
         return cached[1], cached[2]
     if suffix == ".deb":
-        # Не сканируем пул внутри HTTP-запроса: это и давало 500.
         return (cached[1], cached[2]) if cached else (0, 0)
     files = 0
-    size = 0
+    size = _du_bytes(root)
     if root.exists():
         for dirpath, _, filenames in os.walk(root):
             for name in filenames:
-                if not name.endswith(suffix):
-                    continue
-                files += 1
-                try:
-                    size += os.path.getsize(os.path.join(dirpath, name))
-                except OSError:
-                    pass
+                if name.endswith(suffix):
+                    files += 1
     _count_cache[key] = (now, files, size)
     return files, size
 
@@ -50,16 +55,12 @@ def refresh_deb_cache():
     root = settings.STORAGE_ROOT / "aptly"
     now = datetime.utcnow().timestamp()
     files = 0
-    size = 0
+    size = _du_bytes(root)
     if root.exists():
         for dirpath, _, filenames in os.walk(root):
             for name in filenames:
                 if name.endswith(".deb"):
                     files += 1
-                    try:
-                        size += os.path.getsize(os.path.join(dirpath, name))
-                    except OSError:
-                        pass
     _count_cache[str(root)] = (now, files, size)
 
 

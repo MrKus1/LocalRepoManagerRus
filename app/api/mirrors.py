@@ -2,7 +2,7 @@ from typing import List
 from pathlib import Path
 import shutil
 
-from fastapi import APIRouter, Depends, HTTPException, status, Query, UploadFile, File
+from fastapi import APIRouter, Depends, HTTPException, status, Query, UploadFile, File, Request
 from fastapi.responses import PlainTextResponse
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select, delete as sql_delete
@@ -176,10 +176,14 @@ async def client_check(mirror_id: int, db: AsyncSession = Depends(get_db)):
     code, out, err = await deb_service.run_check(["curl", "-fsS", "-o", "/dev/null", "-w", "%{http_code}", "--max-time", "15", url])
     ok = code == 0 and out.strip() == "200"
     return {"ok": ok, "url": url, "http_code": out.strip(), "error": err[:300]}
-async def client_file(mirror_id: int, host: str = "192.168.3.48", db: AsyncSession = Depends(get_db)):
+
+
+@router.get("/{mirror_id}/client-file")
+async def client_file(mirror_id: int, request: Request, db: AsyncSession = Depends(get_db)):
     mirror = await db.get(Mirror, mirror_id)
     if not mirror:
         raise HTTPException(status_code=404, detail="Зеркало не найдено")
+    host = request.headers.get("host", "127.0.0.1").split(":")[0]
     if mirror.type == "rpm":
         body = (
             f"[{mirror.name}]\n"
@@ -242,11 +246,42 @@ async def mirror_contents(
     if not mirror:
         raise HTTPException(status_code=404, detail="Зеркало не найдено")
 
-    root = Path(mirror.local_path)
     if mirror.type == "deb":
-        published = settings.STORAGE_ROOT / "public" / mirror.name
-        if published.exists():
-            root = published
+        code, out, err = await deb_service.run_check([
+            "aptly", "mirror", "show", "-with-packages", mirror.name
+        ])
+        if code != 0:
+            return {
+                "mirror_id": mirror_id,
+                "path": "aptly",
+                "total": 0,
+                "offset": offset,
+                "limit": limit,
+                "size_bytes": 0,
+                "packages": [],
+                "error": (err or out)[:300],
+            }
+        names = []
+        for line in out.splitlines():
+            line = line.strip()
+            if " " in line or "_" not in line:
+                continue
+            if line.endswith("_amd64") or line.endswith("_all") or line.endswith("_noarch"):
+                names.append(line)
+        if q:
+            names = [n for n in names if q.lower() in n.lower()]
+        page = names[offset:offset + limit]
+        return {
+            "mirror_id": mirror_id,
+            "path": "aptly:" + mirror.name,
+            "total": len(names),
+            "offset": offset,
+            "limit": limit,
+            "size_bytes": 0,
+            "packages": [{"name": n, "size_bytes": 0, "relpath": n} for n in page],
+        }
+
+    root = Path(mirror.local_path)
     if not root.exists():
         return {
             "mirror_id": mirror_id,
@@ -258,7 +293,7 @@ async def mirror_contents(
             "packages": [],
         }
 
-    suffix = ".rpm" if mirror.type == "rpm" else ".deb"
+    suffix = ".rpm"
     matched = []
     size = 0
     for path in root.rglob(f"*{suffix}"):
