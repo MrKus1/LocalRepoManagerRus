@@ -65,7 +65,7 @@ async def lifespan(app: FastAPI):
 app = FastAPI(
     title="Repo Manager",
     description="Менеджер зеркалируемых репозиториев deb и rpm + публикация локальных пакетов",
-    version="0.1.0",
+    version="1.1.8",
     lifespan=lifespan,
 )
 

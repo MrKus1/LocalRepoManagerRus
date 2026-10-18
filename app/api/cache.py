@@ -158,6 +158,9 @@ async def cache_files(cache_id: int, db: AsyncSession = Depends(get_db)):
         if path.is_file():
             files.append({"path": str(path.relative_to(root)), "size": path.stat().st_size})
     return {"files": files[:500], "count": len(files)}
+
+
+@router.delete("/{cache_id}")
 async def delete_cache(cache_id: int, db: AsyncSession = Depends(get_db)):
     row = await db.get(CacheRepo, cache_id)
     if not row:

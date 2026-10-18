@@ -1,0 +1,82 @@
+<footer class="app-footer border-top text-secondary">
+    <div class="container py-3">Локальный менеджер репозиториев</div>
+</footer>
+<div id="appToast" class="app-toast" role="status"></div>
+<div class="modal fade" id="errorModal" tabindex="-1">
+    <div class="modal-dialog modal-dialog-centered">
+        <div class="modal-content">
+            <div class="modal-header"><h5 class="modal-title">Ошибка</h5><button type="button" class="btn-close" data-bs-dismiss="modal"></button></div>
+            <div class="modal-body"><pre id="errorText" class="mb-0 small" style="white-space:pre-wrap"></pre></div>
+            <div class="modal-footer"><button class="btn btn-outline-secondary btn-sm" type="button" data-bs-dismiss="modal">Закрыть</button></div>
+        </div>
+    </div>
+</div>
+<div class="modal fade" id="okModal" tabindex="-1">
+    <div class="modal-dialog modal-dialog-centered">
+        <div class="modal-content">
+            <div class="modal-header"><h5 class="modal-title">Подтверждение</h5><button type="button" class="btn-close" data-bs-dismiss="modal"></button></div>
+            <div class="modal-body"><p id="okText" class="mb-0"></p></div>
+            <div class="modal-footer">
+                <button class="btn btn-outline-secondary btn-sm" type="button" data-bs-dismiss="modal">Отмена</button>
+                <button class="btn btn-danger btn-sm" type="button" onclick="confirmOk()">Да</button>
+            </div>
+        </div>
+    </div>
+</div>
+<div class="modal fade" id="deleteModal" tabindex="-1">
+    <div class="modal-dialog modal-dialog-centered">
+        <div class="modal-content">
+            <div class="modal-header"><h5 class="modal-title">Удаление</h5><button type="button" class="btn-close" data-bs-dismiss="modal"></button></div>
+            <div class="modal-body"><p id="deleteText" class="mb-0"></p></div>
+            <div class="modal-footer">
+                <button class="btn btn-outline-secondary btn-sm" type="button" onclick="confirmDelete(false)">Только запись</button>
+                <button class="btn btn-danger btn-sm" type="button" onclick="confirmDelete(true)">С файлами</button>
+            </div>
+        </div>
+    </div>
+</div>
+<div class="modal fade" id="proxyModal" tabindex="-1">
+    <div class="modal-dialog">
+        <div class="modal-content">
+            <div class="modal-header"><h5 class="modal-title">Прокси</h5><button type="button" class="btn-close" data-bs-dismiss="modal"></button></div>
+            <div class="modal-body">
+                <label class="form-label">Прокси</label>
+                <input id="proxyUrl" class="form-control mb-3" placeholder="http://user:pass@proxy:3128">
+                <label class="form-label">Не проксировать</label>
+                <input id="noProxy" class="form-control" placeholder="127.0.0.1,localhost">
+            </div>
+            <div class="modal-footer"><button class="btn btn-primary btn-sm" type="button" onclick="saveProxy()">Сохранить</button></div>
+        </div>
+    </div>
+</div>
+<div class="modal fade" id="diskModal" tabindex="-1">
+    <div class="modal-dialog">
+        <div class="modal-content">
+            <div class="modal-header"><h5 class="modal-title">Место</h5><button type="button" class="btn-close" data-bs-dismiss="modal"></button></div>
+            <div class="modal-body">
+                <label class="form-label">Минимум свободно, ГБ</label>
+                <input id="minFree" class="form-control" placeholder="пусто = без лимита">
+                <p class="small text-muted mt-2 mb-0">Пустой порог — без ограничения. Новый sync не стартует, если свободно меньше.</p>
+            </div>
+            <div class="modal-footer"><button class="btn btn-primary btn-sm" type="button" onclick="saveMinFree()">Сохранить</button></div>
+        </div>
+    </div>
+</div>
+<div class="modal fade" id="tasksModal" tabindex="-1">
+    <div class="modal-dialog">
+        <div class="modal-content">
+            <div class="modal-header"><h5 class="modal-title">Задачи</h5><button type="button" class="btn-close" data-bs-dismiss="modal"></button></div>
+            <div class="modal-body">
+                <label class="form-label">Очистка кэша, cron</label>
+                <input id="cacheCron" class="form-control mb-1" placeholder="0 4 * * *" oninput="cronHint(this, 'cacheCronHint')">
+                <div class="form-text mb-3" id="cacheCronHint">пример: 0 4 * * * — каждый день в 04:00</div>
+                <label class="form-label">Удалять файлы старше, дней</label>
+                <input id="cacheDays" class="form-control" placeholder="14">
+            </div>
+            <div class="modal-footer">
+                <button class="btn btn-outline-primary btn-sm" type="button" onclick="runCacheCleanup()">Очистить сейчас</button>
+                <button class="btn btn-primary btn-sm" type="button" onclick="saveCacheCleanup()">Сохранить</button>
+            </div>
+        </div>
+    </div>
+</div>

@@ -243,6 +243,8 @@ async def sync_progress(mirror_id: int, db: AsyncSession = Depends(get_db)):
         "line": item.get("line") or "",
         "files": files,
         "size_bytes": size,
+        "last_error": mirror.last_error or "",
+        "last_sync": mirror.last_sync.strftime("%d.%m %H:%M") if mirror.last_sync else "",
     }
 
 

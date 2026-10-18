@@ -1,10 +1,10 @@
-
 body { background: #eef1f4; min-height: 100vh; display: flex; flex-direction: column; }
 .page-main { flex: 1 0 auto; }
 nav.navbar { background: #fff !important; border-bottom: 3px solid #0d6efd !important; }
 footer.app-footer { margin-top: auto; background: #fff; border-top: 1px solid #dee2e6; }
 .cache-line { white-space: pre; overflow-x: auto; word-break: normal; }
-.card { background: #fff; border-width: 2px !important; border-radius: 12px !important; box-shadow: 0 2px 8px rgba(0,0,0,.06); overflow: hidden; position: relative; }
+.card { background: #fff; border-width: 2px !important; border-radius: 12px !important; box-shadow: 0 2px 8px rgba(0,0,0,.06); overflow: visible; position: relative; }
+.dropdown-menu { z-index: 1060; }
 .card-idle { border-color: #dee2e6 !important; }
 .card-running { border-color: #0d6efd !important; }
 .card-success { border-color: #198754 !important; }
@@ -12,14 +12,9 @@ footer.app-footer { margin-top: auto; background: #fff; border-top: 1px solid #d
 .menu-sub { display: block; padding: .45rem 0 .45rem 1rem; cursor: pointer; color: #495057; }
 .menu-close { display: inline-flex; align-items: center; justify-content: center; width: 32px; height: 32px; cursor: pointer; font-size: 1.2rem; }
 .reach-lamp { position: absolute; top: 10px; right: 10px; width: 12px; height: 12px; border-radius: 50%; background: #adb5bd; box-shadow: 0 0 6px #adb5bd; }
-.card { position: relative; }
 .lamp-green { background: #198754; box-shadow: 0 0 8px #198754; }
 .lamp-red { background: #dc3545; box-shadow: 0 0 8px #dc3545; }
 .lamp-yellow { background: #ffc107; box-shadow: 0 0 8px #ffc107; }
-.card-idle { border-color: #dee2e6; }
-.card-running { border-color: #0d6efd; }
-.card-success { border-color: #198754; }
-.card-failed { border-color: #dc3545; }
 .err-line { cursor: pointer; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .status-idle { color: #6c757d; }
 .status-running { color: #0d6efd; }
@@ -29,12 +24,14 @@ footer.app-footer { margin-top: auto; background: #fff; border-top: 1px solid #d
 .badge-rpm { background: #e44d26; }
 .filter-btn { white-space: nowrap; border-radius: .5rem !important; background: #fff; }
 .filter-btn.active { background: #e7f1ff; color: #0d6efd; border-color: #9ec5fe; }
-.disk-bar { height: 6px; background: #e9ecef; border-radius: 99px; width: 180px; margin-left: auto; }
+.disk-slot { min-width: 0; }
+.disk-bar { height: 6px; background: #e9ecef; border-radius: 99px; width: 160px; max-width: 100%; margin-left: auto; }
 .disk-bar > span { display: block; height: 100%; background: #198754; border-radius: 99px; }
 .disk-ok { background: #198754 !important; }
 .disk-warn { background: #ffc107 !important; }
 .disk-full { background: #dc3545 !important; }
-.side-menu { position: fixed; top: 0; left: 0; height: 100vh; width: 360px; background: #eef1f4; color: #212529; z-index: 1040; transform: translateX(-100%); transition: transform .2s ease; overflow: auto; padding: 1rem; border-right: 1px solid #ced4da; }
+.side-menu { position: fixed; top: 0; left: 0; height: 100vh; width: min(360px, 88vw); background: #eef1f4; color: #212529; z-index: 1040; transform: translateX(-100%); transition: transform .2s ease; overflow: auto; padding: 1rem; border-right: 1px solid #ced4da; display: flex; flex-direction: column; }
+.app-version { margin-top: auto; padding-top: 1.5rem; color: #6c757d; font-size: .85rem; }
 .side-menu.open { transform: translateX(0); }
 .side-backdrop { position: fixed; inset: 0; background: rgba(0,0,0,.25); z-index: 1030; display: none; }
 .side-backdrop.show { display: block; }
@@ -42,3 +39,13 @@ footer.app-footer { margin-top: auto; background: #fff; border-top: 1px solid #d
 .menu-link { display: inline-block; width: 32px; height: 28px; cursor: pointer; }
 .menu-link i { display: block; height: 2px; margin: 6px 0; background: #343a40; }
 pre { white-space: pre-wrap; }
+.app-toast { position: fixed; right: 16px; bottom: 16px; z-index: 1080; max-width: min(360px, calc(100vw - 32px)); padding: .7rem 1rem; border-radius: 10px; color: #fff; background: #198754; box-shadow: 0 6px 20px rgba(0,0,0,.18); opacity: 0; transform: translateY(8px); pointer-events: none; transition: .2s; }
+.app-toast.show { opacity: 1; transform: none; }
+.app-toast.bad { background: #dc3545; }
+.page-tabs .nav-link { color: #495057; }
+.page-tabs .nav-link.active { color: #0d6efd; font-weight: 600; }
+.card-progress { height: 6px; }
+@media (max-width: 576px) {
+    .disk-bar { width: 110px; }
+    .navbar-brand { font-size: 1rem; }
+}

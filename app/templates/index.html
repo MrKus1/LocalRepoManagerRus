@@ -5,42 +5,29 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Менеджер репозиториев</title>
     <link href="/static/css/bootstrap.min.css" rel="stylesheet">
-    <link href="/static/css/app.css?v=4" rel="stylesheet">
-    <script src="/static/js/htmx.min.js"></script>
+    <link href="/static/css/app.css?v=8" rel="stylesheet">
 </head>
 <body>
 <div class="page-main">
-<nav class="navbar border-bottom mb-4" style="background:#e7ebef">
-    <div class="container">
-        <span class="menu-link" onclick="toggleMenu()" title="Меню"><i></i><i></i><i></i></span>
-        <a class="navbar-brand mb-0" href="/">Менеджер репозиториев</a>
-        <span class="navbar-text text-end"><span id="diskInfo">диск: …</span><div class="disk-bar mt-1"><span id="diskBar" style="width:0"></span></div></span>
-    </div>
-</nav>
-<div class="side-backdrop" id="sideBackdrop" onclick="toggleMenu()"></div>
-<aside class="side-menu" id="sideMenu">
-    <div class="d-flex justify-content-between align-items-center mb-3">
-        <strong>Меню</strong>
-        <span class="menu-close" onclick="toggleMenu()">←</span>
-    </div>
-    <a href="/">Зеркала</a>
-    <a href="/#local">Локальные репозитории</a>
-    <div class="menu-item" onclick="document.getElementById('settingsTree').classList.toggle('d-none')">Настройки</div>
-    <div id="settingsTree" class="d-none">
-        <div class="menu-sub" onclick="openSettings('proxyModal')">Прокси</div>
-        <div class="menu-sub" onclick="openSettings('diskModal')">Место</div>
-        <div class="menu-sub" onclick="openSettings('tasksModal')">Tasks</div>
-    </div>
-    <div class="menu-item" onclick="cleanupAptly()">Очистить deb</div>
-</aside>
+{% include '_nav.html' %}
 
 <div class="container">
+    <ul class="nav nav-tabs page-tabs mb-3">
+        <li class="nav-item"><button class="nav-link active" data-tab="mirrors" type="button">Зеркала ({{ mirrors|length }})</button></li>
+        <li class="nav-item"><button class="nav-link" data-tab="cache" type="button">Кэш <span id="cacheCount"></span></button></li>
+        <li class="nav-item"><button class="nav-link" data-tab="local" type="button">Локальные ({{ local_repos|length }})</button></li>
+    </ul>
+    <div id="tab-mirrors">
     <div class="row mb-3 align-items-center">
         <div class="col">
             <h2 class="mb-0">Зеркала</h2>
-            <div class="small text-muted">Управление зеркалами и их статусами.</div>
+            <div class="small text-muted" id="mirrorStats">
+                включено {{ mirrors|selectattr('enabled')|list|length }},
+                с ошибкой {{ mirrors|selectattr('status', 'equalto', 'failed')|list|length }}
+            </div>
         </div>
         <div class="col-auto d-flex flex-wrap gap-2 justify-content-end">
+            <button class="btn btn-outline-primary btn-sm" type="button" onclick="syncAll()">Sync все</button>
             <a class="btn btn-outline-secondary btn-sm" href="/api/mirrors/export">Экспорт</a>
             <button class="btn btn-outline-secondary btn-sm" onclick="document.getElementById('importFile').click()">Импорт</button>
             <input type="file" id="importFile" accept=".txt,.csv" hidden onchange="importMirrors(this)">
@@ -52,6 +39,7 @@
         <button class="btn btn-outline-secondary btn-sm filter-btn" data-filter="rpm">RPM</button>
         <button class="btn btn-outline-secondary btn-sm filter-btn" data-filter="deb">DEB</button>
         <button class="btn btn-outline-secondary btn-sm filter-btn" data-filter="failed">С ошибкой</button>
+        <button class="btn btn-outline-secondary btn-sm filter-btn" data-filter="running">Идёт</button>
         <input id="mirrorSearch" class="form-control form-control-sm ms-2" style="max-width: 420px" placeholder="Поиск зеркал...">
     </div>
 
@@ -59,35 +47,38 @@
         {% for m in mirrors %}
         <div class="col-md-6 col-lg-4 mb-3 mirror-card" data-type="{{ m.type }}" data-status="{{ m.status }}" data-name="{{ m.name|lower }}">
             <div class="card h-100 card-{{ m.status }}" id="card-{{ m.id }}">
-                <span class="reach-lamp" data-id="{{ m.id }}" data-status="{{ m.status }}" title="проверка nginx"></span>
+                <span class="reach-lamp" data-id="{{ m.id }}" data-status="{{ m.status }}" title="nginx: порт 80"></span>
                 <div class="card-body">
                     <div class="d-flex justify-content-between align-items-start">
                         <h5 class="card-title mb-1"><a href="/mirrors/{{ m.id }}" class="text-decoration-none">{{ m.name }}</a></h5>
-                        <span class="badge {% if m.type == 'deb' %}badge-deb{% else %}badge-rpm{% endif %}">
-                            {{ m.type | upper }}
-                        </span>
+                        <span class="badge {% if m.type == 'deb' %}badge-deb{% else %}badge-rpm{% endif %}">{{ m.type | upper }}</span>
                     </div>
-                    <p class="card-text text-muted small mb-1 text-truncate">{{ m.description or m.distribution or '' }}</p>
-                    <p class="mb-1"><span class="status-{{ m.status }}" id="status-{{ m.id }}">● {{ m.status }}</span></p>
-                    <p class="small mb-2" id="lamp-label-{{ m.id }}">nginx</p>
-                    <p class="small text-muted mb-2" id="progress-{{ m.id }}"></p>
-                    {% if m.schedule %}
-                    <p class="small text-muted mb-2">Расписание: <span class="cron-human" data-cron="{{ m.schedule }}">{{ m.schedule }}</span></p>
-                    {% endif %}
-                    {% if m.last_sync %}
-                    <p class="small text-muted mb-2">
-                        Последняя синхронизация: {{ m.last_sync.strftime('%Y-%m-%d %H:%M') }}
-                    </p>
-                    {% endif %}
+                    <p class="mb-1"><span class="status-{{ m.status }}" id="status-{{ m.id }}" data-status="{{ m.status }}">● {% if m.status == 'success' %}готово{% elif m.status == 'running' %}идёт{% elif m.status == 'failed' %}ошибка{% else %}ожидает{% endif %}</span>
+                        <span class="text-muted small" id="size-{{ m.id }}">{% if m.size_bytes %}· {{ '%.1f'|format(m.size_bytes / 1073741824) }} ГБ{% endif %}</span>
+                        <span class="text-muted small" id="synced-{{ m.id }}">{% if m.last_sync %}· {{ m.last_sync.strftime('%d.%m %H:%M') }}{% endif %}</span></p>
+                    {% if m.schedule %}<p class="small text-muted mb-1 cron-human" data-cron="{{ m.schedule }}">{{ m.schedule }}</p>{% endif %}
                     {% if m.last_error %}
-                    <div class="alert alert-danger py-1 px-2 small err-line" title="{{ m.last_error }}">{{ m.last_error }}</div>
+                    <div class="alert alert-danger py-1 px-2 small err-line" id="err-{{ m.id }}" title="нажмите, чтобы увидеть полностью" onclick="showError(this)">{{ m.last_error }}</div>
+                    {% else %}
+                    <div class="alert alert-danger py-1 px-2 small err-line d-none" id="err-{{ m.id }}" title="нажмите, чтобы увидеть полностью" onclick="showError(this)"></div>
                     {% endif %}
+                    <div class="progress card-progress mb-1 {% if m.status != 'running' %}d-none{% endif %}" id="barwrap-{{ m.id }}"><div id="bar-{{ m.id }}" class="progress-bar" style="width:0"></div></div>
+                    <p class="small text-muted mb-2 {% if m.status != 'running' %}d-none{% endif %}" id="progress-{{ m.id }}"></p>
                     <div class="d-flex flex-wrap gap-2">
                         <button class="btn btn-sm btn-outline-primary sync-btn" data-id="{{ m.id }}" onclick="syncMirror({{ m.id }})" {% if m.status == 'running' %}style="display:none"{% endif %}>Sync</button>
                         <button class="btn btn-sm btn-outline-warning stop-btn" data-id="{{ m.id }}" onclick="stopMirror({{ m.id }})" {% if m.status != 'running' %}style="display:none"{% endif %}>Стоп</button>
                         <a class="btn btn-sm btn-outline-secondary" href="/mirrors/{{ m.id }}">Открыть</a>
-                        <button class="btn btn-sm btn-outline-secondary" onclick="showContents({{ m.id }}, '{{ m.name }}')">Пакеты</button>
-                        <button class="btn btn-sm btn-outline-danger" onclick="deleteMirror({{ m.id }}, '{{ m.name }}')" {% if m.status == 'running' %}disabled title="дождитесь окончания sync"{% endif %}>Удалить</button>
+                        <button class="btn btn-sm btn-outline-secondary" type="button"
+                            data-type="{{ m.type }}" data-name="{{ m.name }}" data-dist="{{ m.distribution or 'stable' }}" data-comp="{{ m.components or 'main' }}"
+                            onclick="copyMirrorLine(this)">Копировать</button>
+                        <div class="dropdown">
+                            <button class="btn btn-sm btn-outline-secondary dropdown-toggle" data-bs-toggle="dropdown" type="button">Ещё</button>
+                            <ul class="dropdown-menu">
+                                <li><button class="dropdown-item" type="button" onclick="editMirror({{ m.id }})">Настройки</button></li>
+                                <li><button class="dropdown-item" type="button" onclick="showContents({{ m.id }}, '{{ m.name }}')">Пакеты</button></li>
+                                <li><button class="dropdown-item text-danger delete-item" type="button" onclick="deleteMirror({{ m.id }}, '{{ m.name }}')" {% if m.status == 'running' %}disabled{% endif %}>Удалить</button></li>
+                            </ul>
+                        </div>
                     </div>
                 </div>
             </div>
@@ -101,8 +92,9 @@
         </div>
         {% endfor %}
     </div>
+    </div>
 
-    <hr class="section-split my-5">
+    <div id="tab-cache" class="d-none">
     <div class="row mb-3 align-items-center">
         <div class="col">
             <h2 class="mb-0">Кэш по запросу</h2>
@@ -115,14 +107,19 @@
     <form id="cacheForm" class="card card-body mb-3 d-none" onsubmit="return createCache(event)">
         <div class="row g-2">
             <div class="col-md-3"><input class="form-control" name="name" placeholder="имя" required></div>
-            <div class="col-md-2"><select class="form-select" name="type"><option value="rpm">rpm</option><option value="deb">deb</option></select></div>
+            <div class="col-md-2"><select class="form-select" name="type" id="cacheType" onchange="toggleCacheFields()"><option value="rpm">rpm</option><option value="deb">deb</option></select></div>
             <div class="col-md-5"><input class="form-control" name="source_url" placeholder="http://mirror/path" required></div>
             <div class="col-md-2"><button class="btn btn-primary w-100" type="submit">Создать</button></div>
         </div>
+        <div class="row g-2 mt-1 d-none" id="cacheDebFields">
+            <div class="col-md-3"><input class="form-control" name="distribution" placeholder="distribution, bookworm"></div>
+            <div class="col-md-3"><input class="form-control" name="component" placeholder="component, main"></div>
+        </div>
     </form>
     <div class="row" id="cacheList"></div>
+    </div>
 
-    <hr class="section-split my-5">
+    <div id="tab-local" class="d-none">
     <div class="row mb-4 align-items-center">
         <div class="col">
             <h2 id="local" class="mb-0">Локальные репозитории</h2>
@@ -144,13 +141,19 @@
                             {{ r.type | upper }}
                         </span>
                     </div>
-                    <p class="small text-muted text-truncate">/repo/local/{{ r.type }}/{{ r.name }}/ <button class="btn btn-link btn-sm p-0" type="button" onclick="navigator.clipboard.writeText(location.origin + '/repo/local/{{ r.type }}/{{ r.name }}/')">копировать</button></p>
+                    <p class="small text-muted text-truncate mb-2">/repo/local/{{ r.type }}/{{ r.name }}/</p>
                     <div class="d-flex flex-wrap gap-2">
                         <input type="file" id="up-{{ r.id }}" hidden onchange="uploadPkg({{ r.id }}, this)">
-                        <button class="btn btn-sm btn-outline-primary" onclick="document.getElementById('up-{{ r.id }}').click()">Загрузить</button>
-                        <a class="btn btn-sm btn-outline-primary" href="/repo/local/{{ r.type }}/{{ r.name }}/" target="_blank">Открыть</a>
-                        <button class="btn btn-sm btn-outline-primary" onclick="showContents({{ r.id }}, '{{ r.name }}', 'local')">Содержимое</button>
-                        <button class="btn btn-sm btn-outline-danger" onclick="deleteLocal({{ r.id }}, '{{ r.name }}')">Удалить</button>
+                        <button class="btn btn-sm btn-outline-primary" type="button" onclick="document.getElementById('up-{{ r.id }}').click()">Загрузить</button>
+                        <a class="btn btn-sm btn-outline-secondary" href="/repo/local/{{ r.type }}/{{ r.name }}/" target="_blank">Открыть</a>
+                        <button class="btn btn-sm btn-outline-secondary" type="button" onclick="navigator.clipboard.writeText(location.origin + '/repo/local/{{ r.type }}/{{ r.name }}/').then(() => toast('Строка скопирована'))">Копировать</button>
+                        <div class="dropdown">
+                            <button class="btn btn-sm btn-outline-secondary dropdown-toggle" data-bs-toggle="dropdown" data-bs-boundary="viewport" type="button">Ещё</button>
+                            <ul class="dropdown-menu">
+                                <li><button class="dropdown-item" type="button" onclick="showContents({{ r.id }}, '{{ r.name }}', 'local')">Содержимое</button></li>
+                                <li><button class="dropdown-item text-danger" type="button" onclick="deleteLocal({{ r.id }}, '{{ r.name }}')">Удалить</button></li>
+                            </ul>
+                        </div>
                     </div>
                 </div>
             </div>
@@ -164,59 +167,12 @@
         </div>
         {% endfor %}
     </div>
+    </div>
 </div>
 
 </div>
-</div>
 
-<footer class="app-footer border-top text-secondary">
-    <div class="container py-3">Локальный менеджер репозиториев</div>
-</footer>
-
-<div class="modal fade" id="proxyModal" tabindex="-1">
-    <div class="modal-dialog">
-        <div class="modal-content">
-            <div class="modal-header"><h5 class="modal-title">Прокси</h5><button type="button" class="btn-close" data-bs-dismiss="modal"></button></div>
-            <div class="modal-body">
-                <label class="form-label">Прокси</label>
-                <input id="proxyUrl" class="form-control mb-3" placeholder="http://user:pass@proxy:3128">
-                <label class="form-label">Не проксировать</label>
-                <input id="noProxy" class="form-control" placeholder="127.0.0.1,localhost">
-            </div>
-            <div class="modal-footer"><button class="btn btn-primary btn-sm" type="button" onclick="saveProxy()">Сохранить</button></div>
-        </div>
-    </div>
-</div>
-<div class="modal fade" id="diskModal" tabindex="-1">
-    <div class="modal-dialog">
-        <div class="modal-content">
-            <div class="modal-header"><h5 class="modal-title">Место</h5><button type="button" class="btn-close" data-bs-dismiss="modal"></button></div>
-            <div class="modal-body">
-                <label class="form-label">Минимум свободно, ГБ</label>
-                <input id="minFree" class="form-control" placeholder="пусто = без лимита">
-                <p class="small text-muted mt-2 mb-0">Пустой порог — без ограничения. Новый sync не стартует, если свободно меньше.</p>
-            </div>
-            <div class="modal-footer"><button class="btn btn-primary btn-sm" type="button" onclick="saveMinFree()">Сохранить</button></div>
-        </div>
-    </div>
-</div>
-<div class="modal fade" id="tasksModal" tabindex="-1">
-    <div class="modal-dialog">
-        <div class="modal-content">
-            <div class="modal-header"><h5 class="modal-title">Tasks</h5><button type="button" class="btn-close" data-bs-dismiss="modal"></button></div>
-            <div class="modal-body">
-                <label class="form-label">Очистка кэша, cron</label>
-                <input id="cacheCron" class="form-control mb-3" placeholder="0 4 * * *">
-                <label class="form-label">Удалять файлы старше, дней</label>
-                <input id="cacheDays" class="form-control" placeholder="14">
-            </div>
-            <div class="modal-footer">
-                <button class="btn btn-outline-primary btn-sm" type="button" onclick="runCacheCleanup()">Очистить сейчас</button>
-                <button class="btn btn-primary btn-sm" type="button" onclick="saveCacheCleanup()">Сохранить</button>
-            </div>
-        </div>
-    </div>
-</div>
+{% include '_shell.html' %}
 
 <div class="modal fade" id="cacheLineModal" tabindex="-1">
     <div class="modal-dialog">
@@ -306,7 +262,8 @@
                     </div>
                     <div class="mb-3">
                         <label class="form-label">Cron</label>
-                        <input class="form-control" name="schedule" id="editSchedule" placeholder="0 3 * * *">
+                        <input class="form-control" name="schedule" id="editSchedule" placeholder="0 3 * * *" oninput="cronHint(this, 'editCronHint')">
+                        <div class="form-text" id="editCronHint">пример: 0 3 * * * — каждый день в 03:00</div>
                     </div>
                     <div class="mb-3">
                         <label class="form-label">Описание</label>
@@ -370,7 +327,8 @@
                     </div>
                     <div class="mb-3">
                         <label class="form-label">Cron-расписание (опционально)</label>
-                        <input type="text" class="form-control" name="schedule" placeholder="0 3 * * *">
+                        <input type="text" class="form-control" name="schedule" placeholder="0 3 * * *" oninput="cronHint(this, 'addCronHint')">
+                        <div class="form-text" id="addCronHint">пример: 0 3 * * * — каждый день в 03:00</div>
                     </div>
                     <div class="mb-3">
                         <label class="form-label">Описание</label>
@@ -449,498 +407,8 @@
     </div>
 </div>
 
-<script>
-function toggleMenu() {
-    document.getElementById('sideMenu').classList.toggle('open');
-    document.getElementById('sideBackdrop').classList.toggle('show');
-}
-</script>
 <script src="/static/js/bootstrap.bundle.min.js"></script>
 <script src="/static/js/app.js"></script>
-<script>
-function fmtGb(n) {
-    return (n / 1024 / 1024 / 1024).toFixed(1) + ' ГБ';
-}
-function openSettings(id) {
-    bootstrap.Modal.getOrCreateInstance(document.getElementById(id)).show();
-}
-function toggleMenu() {
-    document.getElementById('sideMenu').classList.toggle('open');
-    document.getElementById('sideBackdrop').classList.toggle('show');
-}
 
-fetch('/api/cache/cleanup').then(r => r.json()).then(d => {
-    const c = document.getElementById('cacheCron');
-    const n = document.getElementById('cacheDays');
-    if (c) c.value = d.cron || '';
-    if (n) n.value = d.days || '';
-}).catch(() => {});
-async function saveCacheCleanup() {
-    const res = await fetch('/api/cache/cleanup', {
-        method: 'PUT',
-        headers: {'Content-Type': 'application/json'},
-        body: JSON.stringify({
-            cron: document.getElementById('cacheCron').value,
-            days: document.getElementById('cacheDays').value
-        })
-    });
-    if (!res.ok) { alert((await res.json()).detail || res.status); return; }
-    alert('Очистка сохранена');
-}
-async function runCacheCleanup() {
-    const res = await fetch('/api/cache/cleanup/run', {method: 'POST'});
-    const data = await res.json().catch(() => ({}));
-    if (!res.ok) { alert(data.detail || res.status); return; }
-    alert('Удалено файлов: ' + (data.removed || 0));
-}
-fetch('/api/proxy').then(r => r.json()).then(d => {
-    const u = document.getElementById('proxyUrl');
-    const n = document.getElementById('noProxy');
-    if (u) u.value = d.proxy_url || '';
-    if (n) n.value = d.no_proxy || '';
-});
-
-fetch('/api/min-free').then(r => r.json()).then(d => {
-    document.getElementById('minFree').value = d.min_free_gb || '';
-});
-
-async function saveProxy() {
-    const res = await fetch('/api/proxy', {
-        method: 'PUT',
-        headers: {'Content-Type': 'application/json'},
-        body: JSON.stringify({
-            proxy_url: document.getElementById('proxyUrl').value,
-            no_proxy: document.getElementById('noProxy').value
-        })
-    });
-    if (!res.ok) { alert('Не удалось сохранить прокси'); return; }
-    alert('Прокси сохранён');
-}
-
-async function saveMinFree() {
-    const res = await fetch('/api/min-free', {
-        method: 'PUT',
-        headers: {'Content-Type': 'application/json'},
-        body: JSON.stringify({min_free_gb: document.getElementById('minFree').value})
-    });
-    if (!res.ok) { alert('Не удалось сохранить порог'); return; }
-    alert('Порог сохранён');
-}
-
-fetch('/api/disk').then(r => r.json()).then(d => {
-    document.getElementById('diskInfo').textContent =
-        'диск ' + fmtGb(d.used_bytes) + ' занято, ' + fmtGb(d.free_bytes) + ' свободно из ' + fmtGb(d.total_bytes);
-    const bar = document.getElementById('diskBar');
-    if (!bar || !d.total_bytes) return;
-    const pct = d.used_bytes / d.total_bytes * 100;
-    bar.style.width = Math.min(100, pct).toFixed(0) + '%';
-    bar.className = pct < 70 ? 'disk-ok' : pct < 91 ? 'disk-warn' : 'disk-full';
-}).catch(() => {
-    document.getElementById('diskInfo').textContent = 'диск: нет данных';
-});
-
-function humanCron(expr) {
-    const p = (expr || '').trim().split(/\s+/);
-    if (p.length < 5) return expr;
-    const [min, hour, dom, mon, dow] = p;
-    const hh = hour.padStart(2, '0');
-    const mm = min.padStart(2, '0');
-    const days = {0:'вс',1:'пн',2:'вт',3:'ср',4:'чт',5:'пт',6:'сб',7:'вс'};
-    if (min.startsWith('*/')) return 'каждые ' + min.slice(2) + ' мин';
-    if (dom === '*' && mon === '*' && dow === '*') return 'каждый день в ' + hh + ':' + mm;
-    if (dom === '*' && mon === '*' && dow !== '*') return 'по ' + (days[dow] || dow) + ' в ' + hh + ':' + mm;
-    return expr;
-}
-document.querySelectorAll('.cron-human').forEach(el => {
-    el.textContent = humanCron(el.dataset.cron);
-});
-
-async function uploadPkg(repoId, input) {
-    const file = input.files[0];
-    if (!file) return;
-    const body = new FormData();
-    body.append('file', file);
-    const res = await fetch('/api/local-repos/' + repoId + '/packages', {method: 'POST', body});
-    const data = await res.json().catch(() => ({}));
-    if (!res.ok) {
-        alert('Ошибка загрузки: ' + (data.detail || res.status));
-        return;
-    }
-    alert('Пакет добавлен: ' + file.name);
-    input.value = '';
-}
-
-async function importMirrors(input) {
-    const file = input.files[0];
-    if (!file) return;
-    const body = new FormData();
-    body.append('file', file);
-    const res = await fetch('/api/mirrors/import', {method: 'POST', body});
-    const data = await res.json().catch(() => ({}));
-    if (!res.ok) { alert(data.detail || res.status); return; }
-    alert('Создано: ' + (data.created || []).join(', ') + '\nОшибки: ' + (data.errors || []).join('\n'));
-    location.reload();
-}
-
-async function createCache(e) {
-    e.preventDefault();
-    const data = Object.fromEntries(new FormData(e.target));
-    const res = await fetch('/api/cache/', {method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify(data)});
-    if (!res.ok) { alert((await res.json()).detail || res.status); return false; }
-    location.reload();
-    return false;
-}
-fetch('/api/cache/').then(r => r.json()).then(rows => {
-    const box = document.getElementById('cacheList');
-    if (!box) return;
-    const nl = String.fromCharCode(10);
-    box.innerHTML = rows.map(r => {
-        const line = r.type === 'rpm'
-            ? '[' + r.name + ']' + nl + 'name=' + r.name + nl + 'baseurl=http://' + location.hostname + '/cache/' + r.name + '/' + nl + 'gpgcheck=0' + nl + 'enabled=1'
-            : 'deb http://' + location.hostname + '/cache/' + r.name + ' ' + (r.distribution || 'bookworm') + ' ' + (r.component || 'main');
-        const safe = line.replace(/</g, '');
-        return '<div class="col-md-6 col-lg-4 mb-3"><div class="card h-100"><div class="card-body"><h5>' + r.name + '</h5><p class="small text-muted">' + r.type + '</p><p class="small text-truncate" title="' + r.source_url + '">источник: ' + r.source_url + '</p><div class="d-flex flex-wrap gap-1"><button class="btn btn-sm btn-outline-primary" type="button" onclick="showCacheLine(' + r.id + ')">Строка</button><button class="btn btn-sm btn-outline-primary" type="button" onclick="copyCache(' + r.id + ')">Копировать</button><button class="btn btn-sm btn-outline-primary" type="button" onclick="downloadCache(' + r.id + ', \'' + r.name + '\', \'' + r.type + '\')">Скачать</button><button class="btn btn-sm btn-outline-primary" type="button" onclick="editCache(' + r.id + ')">Ссылка</button><button class="btn btn-sm btn-outline-primary" type="button" onclick="showCacheFiles(' + r.id + ', \'' + r.name + '\')">Файлы</button></div></div></div></div>';
-    }).join('') || '<div class="col-12 text-muted">Кэшей нет. Пакет скачается при первом запросе клиента.</div>';
-    rows.forEach(r => {
-        const line = r.type === 'rpm'
-            ? '[' + r.name + ']' + nl + 'name=' + r.name + nl + 'baseurl=http://' + location.hostname + '/cache/' + r.name + '/' + nl + 'gpgcheck=0' + nl + 'enabled=1'
-            : 'deb http://' + location.hostname + '/cache/' + r.name + ' ' + (r.distribution || 'bookworm') + ' ' + (r.component || 'main');
-        const node = document.getElementById('cline-' + r.id);
-        if (node) node.textContent = line;
-        window.cacheLines = window.cacheLines || {};
-        window.cacheLines[r.id] = line;
-        window.cacheUrls = window.cacheUrls || {};
-        window.cacheUrls[r.id] = r.source_url;
-    });
-}).catch(() => {});
-function showCacheLine(id) {
-    document.getElementById('cacheLineBody').textContent = window.cacheLines[id] || '';
-    bootstrap.Modal.getOrCreateInstance(document.getElementById('cacheLineModal')).show();
-}
-function copyCache(id) {
-    navigator.clipboard.writeText(window.cacheLines[id] || '');
-}
-function downloadCache(id, name, type) {
-    const text = window.cacheLines[id] || '';
-    const blob = new Blob([text + '\n'], {type: 'text/plain'});
-    const a = document.createElement('a');
-    a.href = URL.createObjectURL(blob);
-    a.download = name + (type === 'rpm' ? '.repo' : '.list');
-    a.click();
-}
-async function editCache(id) {
-    document.getElementById('cacheEditId').value = id;
-    document.getElementById('cacheEditUrl').value = window.cacheUrls[id] || '';
-    bootstrap.Modal.getOrCreateInstance(document.getElementById('cacheEditModal')).show();
-}
-async function saveCacheUrl(e) {
-    e.preventDefault();
-    const id = document.getElementById('cacheEditId').value;
-    const url = document.getElementById('cacheEditUrl').value.trim();
-    const res = await fetch('/api/cache/' + id, {method:'PUT', headers:{'Content-Type':'application/json'}, body: JSON.stringify({source_url: url})});
-    if (!res.ok) { alert((await res.json()).detail || res.status); return false; }
-    location.reload();
-    return false;
-}
-async function showCacheFiles(id, name) {
-    const res = await fetch('/api/cache/' + id + '/files');
-    const data = await res.json();
-    const rows = (data.files || []).map(f => {
-        const mb = f.size / 1024 / 1024;
-        const size = mb >= 1 ? mb.toFixed(1) + ' МБ' : Math.max(1, Math.round(f.size / 1024)) + ' КБ';
-        return '<tr><td class="text-break">' + f.path + '</td><td class="text-end text-nowrap">' + size + '</td></tr>';
-    }).join('');
-    document.getElementById('cacheFilesTitle').textContent = name;
-    document.getElementById('cacheFilesBody').innerHTML = rows || '<tr><td colspan="2">Пока пусто</td></tr>';
-    bootstrap.Modal.getOrCreateInstance(document.getElementById('cacheFilesModal')).show();
-}
-async function cleanupAptly() {
-    if (!confirm('Удалить пакеты aptly, на которые не ссылается ни одно зеркало?')) return;
-    const res = await fetch('/api/mirrors/cleanup-aptly', {method: 'POST'});
-    const data = await res.json().catch(() => ({}));
-    if (!res.ok) { alert(data.detail || res.status); return; }
-    alert('Готово');
-}
-document.querySelectorAll('.reach-lamp').forEach(async el => {
-    if (el.dataset.status === 'running') {
-        el.className = 'reach-lamp lamp-yellow';
-        el.title = 'синхронизируется';
-        return;
-    }
-    const res = await fetch('/api/mirrors/' + el.dataset.id + '/client-check');
-    const data = await res.json().catch(() => ({ok: false}));
-    el.className = 'reach-lamp ' + (data.ok ? 'lamp-green' : 'lamp-red');
-    el.title = data.ok ? 'nginx отдал 200' : 'nginx не отдал репозиторий';
-    const label = document.getElementById('lamp-label-' + el.dataset.id);
-    if (label) label.textContent = data.ok ? 'nginx : OK' : 'nginx : нет';
-});
-
-document.getElementById('mirrorSearch').addEventListener('input', (e) => {
-    const q = e.target.value.toLowerCase();
-    document.querySelectorAll('.mirror-card').forEach(card => {
-        card.style.display = card.dataset.name.includes(q) ? '' : 'none';
-    });
-});
-
-document.querySelectorAll('.filter-btn').forEach(btn => {
-    btn.addEventListener('click', () => {
-        document.querySelectorAll('.filter-btn').forEach(b => {
-            b.classList.remove('active', 'btn-primary');
-            b.classList.add('btn-outline-primary');
-        });
-        btn.classList.add('active', 'btn-primary');
-        btn.classList.remove('btn-outline-primary');
-        const filter = btn.dataset.filter;
-        document.querySelectorAll('.mirror-card').forEach(card => {
-            const ok = filter === 'all' || card.dataset.type === filter || (filter === 'failed' && card.dataset.status === 'failed');
-            card.style.display = ok ? '' : 'none';
-        });
-    });
-});
-
-async function pollProgress() {
-    const nodes = document.querySelectorAll('[id^="status-"]');
-    for (const node of nodes) {
-        const id = node.id.replace('status-', '');
-        if (node.textContent.trim() !== 'running' && !node.dataset.live) continue;
-        const res = await fetch('/api/sync/' + id + '/progress');
-        if (!res.ok) continue;
-        const data = await res.json();
-        node.textContent = data.status;
-        node.className = 'status-' + data.status;
-        const card = document.getElementById('card-' + id);
-        if (card) {
-            card.className = 'card h-100 card-' + data.status;
-            card.parentElement.dataset.status = data.status;
-        }
-        const syncBtn = card && card.querySelector('.sync-btn');
-        const stopBtn = card && card.querySelector('.stop-btn');
-        if (syncBtn) syncBtn.style.display = data.status === 'running' ? 'none' : '';
-        if (stopBtn) stopBtn.style.display = data.status === 'running' ? '' : 'none';
-        const lamp = card && card.querySelector('.reach-lamp');
-        if (lamp && data.status === 'running') {
-            lamp.className = 'reach-lamp lamp-yellow';
-            lamp.title = 'синхронизируется';
-        }
-        node.dataset.live = data.status === 'running' ? '1' : '';
-        const bar = document.getElementById('bar-' + id);
-        const label = document.getElementById('progress-' + id);
-        if (data.percent !== null && data.percent !== undefined) {
-            bar.style.width = data.percent + '%';
-            label.textContent = data.percent + '% · ' + data.files + ' пакетов';
-        } else if (data.status === 'running') {
-            bar.style.width = '100%';
-            bar.classList.add('progress-bar-striped', 'progress-bar-animated');
-            label.textContent = 'идёт синхронизация · ' + data.files + ' пакетов';
-        } else {
-            bar.style.width = data.status === 'success' ? '100%' : '0%';
-            bar.classList.remove('progress-bar-animated');
-            label.textContent = data.files ? (data.files + ' пакетов') : '';
-        }
-    }
-}
-setInterval(pollProgress, 5000);
-pollProgress();
-
-let contentsMirrorId = null;
-let contentsKind = 'mirror';
-let contentsOffset = 0;
-const pageSize = 50;
-
-async function editMirror(id) {
-    const res = await fetch('/api/mirrors/' + id);
-    const m = await res.json();
-    document.getElementById('editId').value = m.id;
-    document.getElementById('editName').value = m.name;
-    document.getElementById('editUrl').value = m.source_url || '';
-    document.getElementById('editDistribution').value = m.distribution || '';
-    document.getElementById('editComponents').value = m.components || '';
-    document.getElementById('editArch').value = m.architectures || '';
-    document.getElementById('editRepoid').value = m.repoid || '';
-    document.getElementById('editSchedule').value = m.schedule || '';
-    document.getElementById('editDescription').value = m.description || '';
-    document.getElementById('editEnabled').checked = !!m.enabled;
-    new bootstrap.Modal(document.getElementById('editMirrorModal')).show();
-}
-
-document.getElementById('editMirrorForm').addEventListener('submit', async (e) => {
-    e.preventDefault();
-    const id = document.getElementById('editId').value;
-    const data = {
-        source_url: document.getElementById('editUrl').value,
-        distribution: document.getElementById('editDistribution').value,
-        components: document.getElementById('editComponents').value,
-        architectures: document.getElementById('editArch').value,
-        repoid: document.getElementById('editRepoid').value,
-        schedule: document.getElementById('editSchedule').value,
-        description: document.getElementById('editDescription').value,
-        enabled: document.getElementById('editEnabled').checked
-    };
-    const res = await fetch('/api/mirrors/' + id, {
-        method: 'PATCH',
-        headers: {'Content-Type': 'application/json'},
-        body: JSON.stringify(data)
-    });
-    if (!res.ok) {
-        const err = await res.json().catch(() => ({}));
-        alert('Ошибка: ' + (err.detail || res.status));
-        return;
-    }
-    location.reload();
-});
-
-async function syncMirror(id) {
-    const res = await fetch('/api/sync/' + id, {method: 'POST'});
-    const data = await res.json().catch(() => ({}));
-    if (!res.ok) {
-        alert('Ошибка: ' + (data.detail || res.status));
-        return;
-    }
-    alert('Синхронизация запущена');
-    setTimeout(() => location.reload(), 800);
-}
-
-async function stopMirror(id) {
-    const res = await fetch('/api/sync/' + id + '/stop', {method: 'POST'});
-    const data = await res.json().catch(() => ({}));
-    if (!res.ok) {
-        alert('Ошибка: ' + (data.detail || res.status));
-        return;
-    }
-    alert('Синхронизация остановлена');
-    setTimeout(() => location.reload(), 800);
-}
-
-async function deleteMirror(id, name) {
-    if (!confirm('Удалить зеркало «' + name + '»?')) return;
-    const withFiles = confirm('Удалить также файлы на диске?');
-    const res = await fetch('/api/mirrors/' + id + '?delete_files=' + (withFiles ? 'true' : 'false'), {method: 'DELETE'});
-    if (res.status === 204) {
-        location.reload();
-        return;
-    }
-    const data = await res.json().catch(() => ({}));
-    alert('Ошибка: ' + (data.detail || res.status));
-}
-
-async function deletePkg(filename) {
-    if (contentsKind !== 'local') return;
-    if (!confirm('Удалить пакет ' + filename + '?')) return;
-    const res = await fetch('/api/local-repos/' + contentsMirrorId + '/packages/' + encodeURIComponent(filename), {method: 'DELETE'});
-    if (res.status !== 204) {
-        const data = await res.json().catch(() => ({}));
-        alert(data.detail || res.status);
-        return;
-    }
-    loadContents();
-}
-
-async function deleteLocal(id, name) {
-    if (!confirm('Удалить локальный репозиторий «' + name + '»?')) return;
-    const withFiles = confirm('Удалить также файлы на диске?');
-    const res = await fetch('/api/local-repos/' + id + '?delete_files=' + (withFiles ? 'true' : 'false'), {method: 'DELETE'});
-    if (res.status === 204) {
-        location.reload();
-        return;
-    }
-    const data = await res.json().catch(() => ({}));
-    alert('Ошибка: ' + (data.detail || res.status));
-}
-
-async function loadContents() {
-    const q = document.getElementById('contentsQuery').value || '';
-    const base = contentsKind === 'local'
-        ? '/api/local-repos/' + contentsMirrorId + '/contents'
-        : '/api/mirrors/' + contentsMirrorId + '/contents';
-    const res = await fetch(base + '?limit=' + pageSize + '&offset=' + contentsOffset + '&q=' + encodeURIComponent(q));
-    const data = await res.json();
-    const mb = (data.size_bytes || 0) / 1024 / 1024;
-    const total = data.total || 0;
-    const from = total ? data.offset + 1 : 0;
-    const to = Math.min(data.offset + (data.packages || []).length, total);
-    document.getElementById('contentsMeta').textContent =
-        data.error ? data.error : ('Всего ' + total + ', размер ' + mb.toFixed(1) + ' МБ');
-    document.getElementById('pageInfo').textContent = from + '–' + to + ' из ' + total;
-    document.getElementById('prevPage').disabled = contentsOffset <= 0;
-    document.getElementById('nextPage').disabled = contentsOffset + pageSize >= total;
-    const list = document.getElementById('contentsList');
-    list.innerHTML = (data.packages || []).map(p => {
-        const del = contentsKind === 'local'
-            ? ' <button class="btn btn-sm btn-outline-danger py-0" onclick="deletePkg(\'' + p.name.replace(/'/g, '') + '\')">удалить</button>'
-            : '';
-        return '<div class="border-bottom py-1 d-flex justify-content-between"><span><code>' + p.name + '</code> <span class="text-muted small">' +
-            (p.size_bytes / 1024 / 1024).toFixed(2) + ' МБ</span></span>' + del + '</div>';
-    }).join('') || '<div class="text-muted">' + (data.error || 'Пакетов не найдено') + '</div>';
-}
-
-function showContents(id, name, kind) {
-    contentsMirrorId = id;
-    contentsKind = kind || 'mirror';
-    contentsOffset = 0;
-    document.getElementById('contentsTitle').textContent = 'Содержимое: ' + name;
-    document.getElementById('contentsQuery').value = '';
-    const modal = new bootstrap.Modal(document.getElementById('contentsModal'));
-    modal.show();
-    loadContents();
-}
-
-document.getElementById('contentsQuery').addEventListener('input', () => {
-    clearTimeout(window._cq);
-    window._cq = setTimeout(() => { contentsOffset = 0; loadContents(); }, 300);
-});
-document.getElementById('prevPage').addEventListener('click', () => {
-    contentsOffset = Math.max(0, contentsOffset - pageSize);
-    loadContents();
-});
-document.getElementById('nextPage').addEventListener('click', () => {
-    contentsOffset += pageSize;
-    loadContents();
-});
-
-document.getElementById('mirrorType').addEventListener('change', function() {
-    const isDeb = this.value === 'deb';
-    document.querySelectorAll('.deb-only').forEach(el => el.style.display = isDeb ? 'block' : 'none');
-    document.querySelectorAll('.rpm-only').forEach(el => el.style.display = isDeb ? 'none' : 'block');
-});
-
-document.getElementById('addMirrorForm').addEventListener('submit', async (e) => {
-    e.preventDefault();
-    const form = e.target;
-    const data = Object.fromEntries(new FormData(form));
-    data.enabled = true;
-    
-    const res = await fetch('/api/mirrors/', {
-        method: 'POST',
-        headers: {'Content-Type': 'application/json'},
-        body: JSON.stringify(data)
-    });
-    
-    if (res.ok) {
-        location.reload();
-    } else {
-        const err = await res.json();
-        alert('Ошибка: ' + (err.detail || JSON.stringify(err)));
-    }
-});
-
-document.getElementById('addLocalRepoForm').addEventListener('submit', async (e) => {
-    e.preventDefault();
-    const form = e.target;
-    const data = Object.fromEntries(new FormData(form));
-    
-    const res = await fetch('/api/local-repos/', {
-        method: 'POST',
-        headers: {'Content-Type': 'application/json'},
-        body: JSON.stringify(data)
-    });
-    
-    if (res.ok) {
-        location.reload();
-    } else {
-        const err = await res.json();
-        alert('Ошибка: ' + (err.detail || JSON.stringify(err)));
-    }
-});
-</script>
 </body>
 </html>

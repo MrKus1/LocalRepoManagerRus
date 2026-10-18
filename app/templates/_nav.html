@@ -1,0 +1,31 @@
+<nav class="navbar border-bottom mb-4">
+    <div class="container">
+        <span class="menu-link" onclick="toggleMenu()" title="Меню"><i></i><i></i><i></i></span>
+        <a class="navbar-brand mb-0" href="/">Менеджер репозиториев</a>
+        <span class="navbar-text text-end disk-slot">
+            <span id="runCount" class="small text-muted me-3"></span>
+            <span onclick="openSettings('diskModal')" title="Настройки места" style="cursor:pointer">
+                <span id="diskInfo">диск: …</span>
+                <div class="disk-bar mt-1"><span id="diskBar" style="width:0"></span></div>
+            </span>
+        </span>
+    </div>
+</nav>
+<div class="side-backdrop" id="sideBackdrop" onclick="toggleMenu()"></div>
+<aside class="side-menu" id="sideMenu">
+    <div class="d-flex justify-content-between align-items-center mb-3">
+        <strong>Меню</strong>
+        <span class="menu-close" onclick="toggleMenu()">←</span>
+    </div>
+    <a href="/#mirrors" onclick="return menuGo('mirrors')">Зеркала</a>
+    <a href="/#cache" onclick="return menuGo('cache')">Кэш</a>
+    <a href="/#local" onclick="return menuGo('local')">Локальные репозитории</a>
+    <div class="menu-item" onclick="document.getElementById('settingsTree').classList.toggle('d-none')">Настройки</div>
+    <div id="settingsTree" class="d-none">
+        <div class="menu-sub" onclick="openSettings('proxyModal')">Прокси</div>
+        <div class="menu-sub" onclick="openSettings('diskModal')">Место</div>
+        <div class="menu-sub" onclick="openSettings('tasksModal')">Задачи</div>
+        <div class="menu-sub text-danger" onclick="cleanupAptly()">Очистить deb…</div>
+    </div>
+    <div class="app-version">1.1.8</div>
+</aside>
