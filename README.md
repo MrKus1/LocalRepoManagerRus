@@ -2,7 +2,9 @@
 
 Веб-менеджер локальных зеркал deb и rpm для закрытого контура. Ставится на Oracle Linux 10, отдаёт пакеты через nginx и умеет публиковать свои пакеты.
 
-#Возможности
+![Главная](docs/images/Main.png)
+
+## Возможности
 
 - Зеркала RPM через `dnf reposync` и DEB через `aptly`.
 - Свои локальные репозитории: rpm, deb и простой каталог файлов.
@@ -44,7 +46,7 @@ curl -s http://127.0.0.1:8000/health
 ## Каталоги
 
 | Путь | Назначение |
-|---|---|
+| --- | --- |
 | `/opt/repo-manager` | код и venv |
 | `/var/lib/repo-manager/mirrors` | зеркала |
 | `/var/lib/repo-manager/public` | публикация aptly |
@@ -54,6 +56,8 @@ curl -s http://127.0.0.1:8000/health
 | `/var/lib/repo-manager/proxy.json` | прокси, порог диска, очистка кэша |
 
 ## Как завести зеркало
+
+![Добавление зеркала](docs/images/add_mirror.png)
 
 RPM: URL должен открывать каталог с `repodata/repomd.xml`.
 
@@ -88,7 +92,13 @@ baseurl=http://IP/repo/rpm/OL9_BaseOS
 deb http://IP/repo/deb/Ubuntu22_jammy jammy main
 ```
 
+## Страница зеркала
+
+![Зеркало](docs/images/mirror.png)
+
 ## Меню
+
+![Меню](docs/images/menu.png)
 
 - Прокси — исходящий `http://user:pass@proxy:3128` и исключения.
 - Место — минимум свободных ГБ. Пустое поле снимает ограничение, sync не стартует ниже порога.
@@ -106,10 +116,8 @@ chown -R repoman:repoman /opt/repo-manager
 systemctl start repo-manager
 ```
 
-Рестарт службы обрывает текущий sync. 
-Данные в `/var/lib/repo-manager` и база не затрагиваются.
+Рестарт службы обрывает текущий sync. Данные в `/var/lib/repo-manager` и база не затрагиваются.
 
 ## Чего нет
 
-Авторизации в интерфейсе нет.
-Подпись репозиториев и уведомления не включены.
+Авторизации в интерфейсе нет. Подпись репозиториев и уведомления не включены.
