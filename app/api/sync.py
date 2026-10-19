@@ -19,6 +19,8 @@ from app.services.proxy import sync_blocked, load_max_sync, load_retry
 router = APIRouter(prefix="/api/sync", tags=["sync"])
 
 _count_cache = {}
+_queue: list[int] = []
+_queue_lock = asyncio.Lock()
 
 
 def _du_bytes(root: Path) -> int:
@@ -178,6 +180,7 @@ async def _do_sync(mirror_id: int):
         )
         await db.commit()
         flog.info("sync %s\n%s", "прошла" if success else "не прошла", message or "")
+        asyncio.create_task(_pump())
         if success:
             root = Path(local_path)
             if mirror_type == "deb":
@@ -219,19 +222,53 @@ async def start_sync(
     if mirror.status == SyncStatus.RUNNING.value and not force:
         raise HTTPException(status_code=409, detail="Синхронизация уже выполняется")
 
-    if not force:
-        running = await db.execute(select(Mirror).where(Mirror.status == SyncStatus.RUNNING.value))
-        count = len(running.scalars().all())
-        limit = load_max_sync()
-        if count >= limit:
-            raise HTTPException(status_code=429, detail=f"Уже идёт {count} sync, лимит {limit}")
-
     process = get_process(mirror_id)
     if process is not None and process.returncode is None:
         raise HTTPException(status_code=409, detail="Синхронизация уже выполняется")
 
+    if not force:
+        running = await db.execute(select(Mirror).where(Mirror.status == SyncStatus.RUNNING.value))
+        count = len(running.scalars().all())
+        limit = load_max_sync()
+        async with _queue_lock:
+            if count >= limit or _queue:
+                if mirror_id not in _queue:
+                    _queue.append(mirror_id)
+                mirror.status = "queued"
+                mirror.last_error = None
+                await db.commit()
+                return {"message": "В очереди", "mirror_id": mirror_id, "queued": True, "position": _queue.index(mirror_id) + 1}
+
     background_tasks.add_task(_do_sync, mirror_id)
-    return {"message": "Синхронизация запущена", "mirror_id": mirror_id}
+    return {"message": "Синхронизация запущена", "mirror_id": mirror_id, "queued": False}
+
+
+async def _pump():
+    """Запускает следующие из очереди, пока есть свободный слот."""
+    async with _queue_lock:
+        async with AsyncSessionLocal() as db:
+            running = await db.execute(select(Mirror).where(Mirror.status == SyncStatus.RUNNING.value))
+            count = len(running.scalars().all())
+            limit = load_max_sync()
+            started = 0
+            while _queue and count + started < limit:
+                mirror_id = _queue.pop(0)
+                mirror = await db.get(Mirror, mirror_id)
+                if not mirror or not mirror.enabled or mirror.status == SyncStatus.RUNNING.value:
+                    continue
+                asyncio.create_task(_do_sync(mirror_id))
+                started += 1
+
+
+async def restore_queue():
+    """После рестарта зеркала со статусом queued снова ставит в очередь."""
+    async with _queue_lock:
+        async with AsyncSessionLocal() as db:
+            result = await db.execute(select(Mirror).where(Mirror.status == "queued").order_by(Mirror.updated_at))
+            for mirror in result.scalars().all():
+                if mirror.id not in _queue:
+                    _queue.append(mirror.id)
+    await _pump()
 
 
 @router.post("/{mirror_id}/stop")
@@ -241,6 +278,14 @@ async def stop_sync(mirror_id: int, db: AsyncSession = Depends(get_db)):
     mirror = await db.get(Mirror, mirror_id)
     if not mirror:
         raise HTTPException(status_code=404, detail="Зеркало не найдено")
+
+    async with _queue_lock:
+        if mirror_id in _queue:
+            _queue.remove(mirror_id)
+            mirror.status = SyncStatus.IDLE.value
+            mirror.last_error = None
+            await db.commit()
+            return {"message": "Убрано из очереди", "mirror_id": mirror_id}
 
     process = get_process(mirror_id)
     if process is None or process.returncode is not None:

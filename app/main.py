@@ -53,6 +53,8 @@ async def lifespan(app: FastAPI):
         )
         await db.commit()
         logger.info("Сброшены зеркала, оставшиеся в running после перезапуска")
+        from app.api.sync import restore_queue
+        await restore_queue()
     start_scheduler()
     logger.info("Database initialized")
     
@@ -66,7 +68,7 @@ async def lifespan(app: FastAPI):
 app = FastAPI(
     title="Repo Manager",
     description="Менеджер зеркалируемых репозиториев deb и rpm + публикация локальных пакетов",
-    version="1.2.2",
+    version="1.2.4",
     lifespan=lifespan,
 )
 

@@ -46,6 +46,7 @@ function showError(el) {
 function statusRu(status) {
     if (status === 'success') return 'готово';
     if (status === 'running') return 'идёт';
+    if (status === 'queued') return 'в очереди';
     if (status === 'failed') return 'ошибка';
     return 'ожидает';
 }
@@ -79,15 +80,40 @@ async function refreshLamp(el) {
     el.className = 'reach-lamp ' + (data.ok ? 'lamp-green' : 'lamp-red');
     el.title = data.ok ? 'nginx отдал 200' : 'nginx не отдал репозиторий';
 }
+function markQueued(id) {
+    const status = document.getElementById('status-' + id);
+    if (status) {
+        status.dataset.status = 'queued';
+        status.textContent = '● в очереди';
+        status.className = 'status-queued';
+        status.dataset.live = '1';
+    }
+    const card = document.getElementById('card-' + id);
+    if (!card) return;
+    card.className = 'card h-100 card-queued';
+    card.parentElement.dataset.status = 'queued';
+    const syncBtn = card.querySelector('.sync-btn');
+    const stopBtn = card.querySelector('.stop-btn');
+    const delBtn = card.querySelector('.delete-item');
+    if (syncBtn) syncBtn.style.display = 'none';
+    if (stopBtn) stopBtn.style.display = '';
+    if (delBtn) delBtn.disabled = true;
+}
 async function syncAll() {
     const res = await fetch('/api/mirrors/');
     const rows = await res.json().catch(() => []);
     let started = 0;
+    let queued = 0;
     let skipped = 0;
     for (const m of rows) {
-        if (!m.enabled || m.status === 'running') { skipped += 1; continue; }
+        if (!m.enabled || m.status === 'running' || m.status === 'queued') { skipped += 1; continue; }
         const r = await fetch('/api/sync/' + m.id, {method: 'POST'});
-        if (r.ok) {
+        const data = await r.json().catch(() => ({}));
+        if (!r.ok) { skipped += 1; continue; }
+        if (data.queued) {
+            queued += 1;
+            markQueued(m.id);
+        } else {
             started += 1;
             const status = document.getElementById('status-' + m.id);
             if (status) {
@@ -111,10 +137,10 @@ async function syncAll() {
                 if (wrap) wrap.classList.remove('d-none');
                 if (label) label.classList.remove('d-none');
             }
-        } else skipped += 1;
+        }
     }
     updateRunCount();
-    toast('Запущено ' + started + ', пропущено ' + skipped);
+    toast('Запущено ' + started + ', в очереди ' + queued + ', пропущено ' + skipped);
 }
 function cronHint(input, hintId) {
     const el = document.getElementById(hintId);
@@ -416,7 +442,7 @@ async function pollProgress() {
     const nodes = document.querySelectorAll('[id^="status-"]');
     for (const node of nodes) {
         const id = node.id.replace('status-', '');
-        if (node.dataset.status !== 'running' && !node.dataset.live) continue;
+        if (node.dataset.status !== 'running' && node.dataset.status !== 'queued' && !node.dataset.live) continue;
         const res = await fetch('/api/sync/' + id + '/progress');
         if (!res.ok) continue;
         const data = await res.json();
@@ -430,10 +456,10 @@ async function pollProgress() {
         }
         const syncBtn = card && card.querySelector('.sync-btn');
         const stopBtn = card && card.querySelector('.stop-btn');
-        if (syncBtn) syncBtn.style.display = data.status === 'running' ? 'none' : '';
-        if (stopBtn) stopBtn.style.display = data.status === 'running' ? '' : 'none';
+        if (syncBtn) syncBtn.style.display = (data.status === 'running' || data.status === 'queued') ? 'none' : '';
+        if (stopBtn) stopBtn.style.display = (data.status === 'running' || data.status === 'queued') ? '' : 'none';
         const delBtn = card && card.querySelector('.delete-item');
-        if (delBtn) delBtn.disabled = data.status === 'running';
+        if (delBtn) delBtn.disabled = data.status === 'running' || data.status === 'queued';
         const lamp = card && card.querySelector('.reach-lamp');
         if (lamp && data.status === 'running') {
             lamp.className = 'reach-lamp lamp-yellow';
@@ -455,7 +481,7 @@ async function pollProgress() {
         if (sizeEl) sizeEl.textContent = data.size_bytes ? ('· ' + fmtGb(data.size_bytes)) : '';
         const synced = document.getElementById('synced-' + id);
         if (synced && data.last_sync) synced.textContent = '· ' + data.last_sync;
-        node.dataset.live = data.status === 'running' ? '1' : '';
+        node.dataset.live = (data.status === 'running' || data.status === 'queued') ? '1' : '';
         const wrap = document.getElementById('barwrap-' + id);
         const bar = document.getElementById('bar-' + id);
         const label = document.getElementById('progress-' + id);
@@ -537,6 +563,11 @@ async function syncMirror(id) {
     const data = await res.json().catch(() => ({}));
     if (!res.ok) {
         toast('Ошибка: ' + (data.detail || res.status), false);
+        return;
+    }
+    if (data.queued) {
+        markQueued(id);
+        toast('В очереди');
         return;
     }
     const status = document.getElementById('status-' + id);

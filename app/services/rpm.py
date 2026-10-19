@@ -58,9 +58,16 @@ class RpmService:
         dest = Path(dest_path)
         dest.mkdir(parents=True, exist_ok=True)
 
+        source = (source_url or "").rstrip("/") + "/" if source_url else ""
         cmd = [
             "dnf",
             "--exclude=*.src.rpm",
+            "--disablerepo=*",
+            "--nogpgcheck",
+            "--setopt=fastestmirror=0",
+            "--setopt=retries=5",
+            "--setopt=timeout=60",
+            "--setopt=max_parallel_downloads=3",
             "reposync",
             "--download-metadata",
             "-p", str(dest.parent),
@@ -70,25 +77,30 @@ class RpmService:
         if delete:
             cmd.append("--delete")
 
-        if repoid:
+        if repoid and not source_url:
             cmd.extend(["--repoid", repoid])
         if source_url:
-            url = source_url.rstrip("/") + "/repodata/repomd.xml"
-            code, out, err = await run_cmd(["curl", "-fsSL", "-o", "/dev/null", "-w", "%{http_code}", "--max-time", "20", url])
+            url = source + "repodata/repomd.xml"
+            code, out, err = await run_cmd(["curl", "-fsSL", "-o", "/dev/null", "-w", "%{http_code}", "--max-time", "30", "-L", url])
             if code != 0 or out.strip() != "200":
                 return False, f"repomd.xml недоступен: {url} http={out.strip() or 'нет'} {err.strip()[:200]}"
             temp_name = dest.name
             cmd.extend([
-                f"--repofrompath={temp_name},{source_url}",
-                "--repo", temp_name,
+                f"--repofrompath={temp_name},{source}",
+                "--enablerepo", temp_name,
+                f"--setopt={temp_name}.metadata_expire=0",
             ])
         else:
             return False, "Нужен либо repoid, либо source_url"
 
         code, out, err = await run_cmd(cmd)
         if code != 0:
-            logger.error("reposync failed: %s", err)
-            return False, err or out
+            text = (err or out or "").strip()
+            short = next((line for line in reversed(text.splitlines()) if "RuntimeError:" in line or "Error:" in line or "Cannot download" in line), "")
+            if not short:
+                short = text.splitlines()[-1] if text else "reposync завершился с ошибкой"
+            logger.error("reposync failed: %s", short)
+            return False, short[:500]
 
         meta_path = dest if (dest / "repodata").exists() or any(dest.glob("*.rpm")) else dest
         # reposync кладёт пакеты в dest.parent / repo_name

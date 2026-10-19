@@ -7,10 +7,10 @@
     function setButtons(status) {
         const syncBtn = document.getElementById('syncBtn');
         const stopBtn = document.getElementById('stopBtn');
-        if (syncBtn) syncBtn.style.display = status === 'running' ? 'none' : '';
-        if (stopBtn) stopBtn.style.display = status === 'running' ? '' : 'none';
+        if (syncBtn) syncBtn.style.display = (status === 'running' || status === 'queued') ? 'none' : '';
+        if (stopBtn) stopBtn.style.display = (status === 'running' || status === 'queued') ? '' : 'none';
         const del = document.getElementById('deleteBtn');
-        if (del) del.disabled = status === 'running';
+        if (del) del.disabled = status === 'running' || status === 'queued';
         const statusEl = document.getElementById('mirrorStatus');
         if (statusEl) {
             statusEl.textContent = typeof statusRu === 'function' ? statusRu(status) : status;
@@ -98,8 +98,9 @@
 
     window.mirrorSync = async function () {
         const res = await fetch('/api/sync/' + id, {method:'POST'});
-        if (!res.ok) { const d = await res.json().catch(() => ({})); toast(d.detail || res.status, false); return; }
-        setButtons('running');
+        const data = await res.json().catch(() => ({}));
+        if (!res.ok) { toast(data.detail || res.status, false); return; }
+        setButtons(data.queued ? 'queued' : 'running');
     };
     window.mirrorStop = async function () {
         const res = await fetch('/api/sync/' + id + '/stop', {method:'POST'});

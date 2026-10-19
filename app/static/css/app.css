@@ -7,6 +7,7 @@ footer.app-footer { margin-top: auto; background: #fff; border-top: 1px solid #d
 .dropdown-menu { z-index: 1060; }
 .card-idle { border-color: #dee2e6 !important; }
 .card-running { border-color: #0d6efd !important; }
+.card-queued { border-color: #6f42c1 !important; }
 .card-success { border-color: #198754 !important; }
 .card-failed { border-color: #dc3545 !important; }
 .menu-sub { display: block; padding: .45rem 0 .45rem 1rem; cursor: pointer; color: #495057; }
@@ -18,6 +19,7 @@ footer.app-footer { margin-top: auto; background: #fff; border-top: 1px solid #d
 .err-line { cursor: pointer; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .status-idle { color: #6c757d; }
 .status-running { color: #0d6efd; }
+.status-queued { color: #6f42c1; }
 .status-success { color: #198754; }
 .status-failed { color: #dc3545; }
 .badge-deb { background: #a80030; }
