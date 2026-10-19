@@ -722,3 +722,56 @@ if (alrf) alrf.addEventListener('submit', async (e) => {
         toast('Ошибка: ' + (err.detail || JSON.stringify(err)), false);
     }
 });
+
+function loadUpdateStatus() {
+    fetch('/api/update').then(r => r.json()).then(d => {
+        const el = document.getElementById('updateCurrent');
+        if (el) el.textContent = d.current || '?';
+        const info = document.getElementById('updateInfo');
+        if (info) info.textContent = d.has_backup ? 'Есть резервная копия для отката.' : 'Резервной копии ещё нет.';
+    }).catch(() => {});
+}
+document.getElementById('updateModal')?.addEventListener('show.bs.modal', loadUpdateStatus);
+
+async function applyUpdate() {
+    const input = document.getElementById('updateFile');
+    const info = document.getElementById('updateInfo');
+    if (!input.files.length) { toast('Выберите архив', false); return; }
+    const body = new FormData();
+    body.append('file', input.files[0]);
+    info.textContent = 'Загрузка архива…';
+    let res = await fetch('/api/update/upload', {method: 'POST', body});
+    let data = await res.json().catch(() => ({}));
+    if (!res.ok) { info.textContent = data.detail || 'Архив не принят'; toast(info.textContent, false); return; }
+    info.textContent = 'Архив ' + data.archive + '. Запуск…';
+    res = await fetch('/api/update/apply', {method: 'POST'});
+    data = await res.json().catch(() => ({}));
+    if (!res.ok) { info.textContent = data.detail || 'Не запустилось'; toast(info.textContent, false); return; }
+    info.textContent = 'Обновление идёт, страница перезагрузится.';
+    toast('Обновление запущено');
+    waitForRestart();
+}
+
+async function rollbackUpdate() {
+    if (!confirm('Вернуть предыдущую версию кода?')) return;
+    const res = await fetch('/api/update/rollback', {method: 'POST'});
+    const data = await res.json().catch(() => ({}));
+    if (!res.ok) { toast(data.detail || 'Откат не запустился', false); return; }
+    toast('Откат запущен');
+    waitForRestart();
+}
+
+function waitForRestart() {
+    let tries = 0;
+    const timer = setInterval(async () => {
+        tries += 1;
+        try {
+            const res = await fetch('/health', {cache: 'no-store'});
+            if (res.ok && tries > 2) {
+                clearInterval(timer);
+                location.reload();
+            }
+        } catch (e) {}
+        if (tries > 40) clearInterval(timer);
+    }, 2000);
+}

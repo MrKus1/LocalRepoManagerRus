@@ -17,6 +17,7 @@ from app.database import init_db, get_db, AsyncSessionLocal
 from app.models import Mirror, LocalRepo, SyncLog, SyncStatus, CacheRepo
 from app.services.scheduler import start_scheduler, stop_scheduler
 from app.api import mirrors, sync, packages, cache
+from app.api import update as update_api
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
@@ -65,7 +66,7 @@ async def lifespan(app: FastAPI):
 app = FastAPI(
     title="Repo Manager",
     description="Менеджер зеркалируемых репозиториев deb и rpm + публикация локальных пакетов",
-    version="1.1.9",
+    version="1.2.0",
     lifespan=lifespan,
 )
 
@@ -75,6 +76,7 @@ app.include_router(sync.router)
 app.include_router(packages.router)
 app.include_router(cache.router)
 app.include_router(cache.serve)
+app.include_router(update_api.router)
 
 # Static & Templates
 BASE_DIR = Path(__file__).resolve().parent

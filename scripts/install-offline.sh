@@ -194,6 +194,14 @@ EOF
 systemctl daemon-reload
 systemctl enable repo-manager
 
+
+echo "==> Обновление из интерфейса"
+install -m 755 "$INSTALL_DIR/scripts/repo-manager-update.sh" /usr/local/sbin/repo-manager-update
+cat > /etc/sudoers.d/repo-manager-update << 'SUDO'
+repoman ALL=(root) NOPASSWD: /usr/local/sbin/repo-manager-update
+SUDO
+chmod 440 /etc/sudoers.d/repo-manager-update
+
 echo "==> Nginx"
 cp "$INSTALL_DIR/scripts/nginx-repo-manager.conf" /etc/nginx/conf.d/repo-manager.conf
 nginx -t && systemctl enable --now nginx && systemctl reload nginx || echo "ВНИМАНИЕ: nginx не запустился"
