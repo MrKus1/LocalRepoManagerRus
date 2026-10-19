@@ -14,8 +14,10 @@
     <a class="text-decoration-none" href="/">← К зеркалам</a>
     <div class="d-flex justify-content-between align-items-center mb-3">
         <h2 class="mb-0">{{ mirror.name }} <span class="badge {% if mirror.type == 'deb' %}badge-deb{% else %}badge-rpm{% endif %}">{{ mirror.type | upper }}</span></h2>
-        <div class="d-flex align-items-center gap-2">
+        <div class="d-flex align-items-center gap-2 flex-wrap">
             <span id="mirrorStatus" class="status-{{ mirror.status }}" data-status="{{ mirror.status }}">{% if mirror.status == 'success' %}готово{% elif mirror.status == 'running' %}идёт{% elif mirror.status == 'failed' %}ошибка{% else %}ожидает{% endif %}</span>
+            <button class="btn btn-outline-primary btn-sm" type="button" id="syncBtn" onclick="mirrorSync()" {% if mirror.status == 'running' %}style="display:none"{% endif %}>Sync</button>
+            <button class="btn btn-outline-warning btn-sm" type="button" id="stopBtn" onclick="mirrorStop()" {% if mirror.status != 'running' %}style="display:none"{% endif %}>Стоп</button>
             <button class="btn btn-outline-danger btn-sm" type="button" id="deleteBtn" onclick="mirrorDelete()" {% if mirror.status == 'running' %}disabled{% endif %}>Удалить</button>
         </div>
     </div>
@@ -35,10 +37,6 @@
                     <div class="mb-2"><label class="form-label">Описание</label><textarea class="form-control" id="description">{{ mirror.description or '' }}</textarea></div>
                     <button class="btn btn-primary" type="submit">Сохранить</button>
                 </form>
-                <div class="mt-3 d-flex gap-2">
-                    <button class="btn btn-outline-primary" type="button" id="syncBtn" onclick="mirrorSync()" {% if mirror.status == 'running' %}style="display:none"{% endif %}>Sync</button>
-                    <button class="btn btn-outline-warning" type="button" id="stopBtn" onclick="mirrorStop()" {% if mirror.status != 'running' %}style="display:none"{% endif %}>Стоп</button>
-                </div>
                 </div>
             </div>
         </div>

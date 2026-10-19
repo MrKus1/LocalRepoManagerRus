@@ -21,11 +21,7 @@
     <div class="row mb-3 align-items-center">
         <div class="col">
             <h2 class="mb-0">Зеркала</h2>
-            <div id="mirrorSummary" class="small text-muted mt-1">…</div>
-            <div class="small text-muted" id="mirrorStats">
-                включено {{ mirrors|selectattr('enabled')|list|length }},
-                с ошибкой {{ mirrors|selectattr('status', 'equalto', 'failed')|list|length }}
-            </div>
+<div id="mirrorSummary" class="small text-muted mt-1">…</div>
         </div>
         <div class="col-auto d-flex flex-wrap gap-2 justify-content-end">
             <button class="btn btn-outline-primary btn-sm" type="button" onclick="syncAll()">Sync все</button>
@@ -46,7 +42,7 @@
 
     <div class="row">
         {% for m in mirrors %}
-        <div class="col-md-6 col-lg-4 mb-3 mirror-card" data-type="{{ m.type }}" data-status="{{ m.status }}" data-name="{{ m.name|lower }}">
+        <div class="col-md-6 col-lg-4 mb-3 mirror-card" data-type="{{ m.type }}" data-status="{{ m.status }}" data-enabled="{{ '1' if m.enabled else '0' }}" data-name="{{ m.name|lower }}">
             <div class="card h-100 card-{{ m.status }}" id="card-{{ m.id }}">
                 <span class="reach-lamp" data-id="{{ m.id }}" data-status="{{ m.status }}" title="nginx: порт 80"></span>
                 <div class="card-body">
@@ -66,16 +62,16 @@
                     {% endif %}
                     <div class="progress card-progress mb-1 {% if m.status != 'running' %}d-none{% endif %}" id="barwrap-{{ m.id }}"><div id="bar-{{ m.id }}" class="progress-bar" style="width:0"></div></div>
                     <p class="small text-muted mb-2 {% if m.status != 'running' %}d-none{% endif %}" id="progress-{{ m.id }}"></p>
-                    <div class="d-flex flex-wrap gap-2">
+                    <div class="d-flex gap-2 card-actions">
                         <button class="btn btn-sm btn-outline-primary sync-btn" data-id="{{ m.id }}" onclick="syncMirror({{ m.id }})" {% if m.status == 'running' %}style="display:none"{% endif %}>Sync</button>
                         <button class="btn btn-sm btn-outline-warning stop-btn" data-id="{{ m.id }}" onclick="stopMirror({{ m.id }})" {% if m.status != 'running' %}style="display:none"{% endif %}>Стоп</button>
                         <a class="btn btn-sm btn-outline-secondary" href="/mirrors/{{ m.id }}">Открыть</a>
-                        <button class="btn btn-sm btn-outline-secondary" type="button"
-                            data-type="{{ m.type }}" data-name="{{ m.name }}" data-dist="{{ m.distribution or 'stable' }}" data-comp="{{ m.components or 'main' }}"
-                            onclick="copyMirrorLine(this)">Копировать</button>
                         <div class="dropdown">
                             <button class="btn btn-sm btn-outline-secondary dropdown-toggle" data-bs-toggle="dropdown" type="button">Ещё</button>
                             <ul class="dropdown-menu">
+                                <li><button class="dropdown-item" type="button"
+                                    data-type="{{ m.type }}" data-name="{{ m.name }}" data-dist="{{ m.distribution or 'stable' }}" data-comp="{{ m.components or 'main' }}"
+                                    onclick="copyMirrorLine(this)">Копировать строку</button></li>
                                 <li><button class="dropdown-item" type="button" onclick="editMirror({{ m.id }})">Настройки</button></li>
                                 <li><button class="dropdown-item" type="button" onclick="showContents({{ m.id }}, '{{ m.name }}')">Пакеты</button></li>
                                 <li><button class="dropdown-item text-danger delete-item" type="button" onclick="deleteMirror({{ m.id }}, '{{ m.name }}')" {% if m.status == 'running' %}disabled{% endif %}>Удалить</button></li>

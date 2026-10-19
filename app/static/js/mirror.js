@@ -47,8 +47,9 @@
         if (!res.ok) return;
         const logs = await res.json();
         const body = document.querySelector('#history tbody');
+        const box = document.querySelector('#history') && document.querySelector('#history').parentElement;
         if (!body) return;
-        body.innerHTML = logs.map(l => {
+        const next = logs.map(l => {
             const t = l.started_at ? String(l.started_at).replace('T', ' ').slice(8, 16).replace(/^(\d{2})-(\d{2})/, '$2.$1') : '';
             const when = l.started_at ? (function () {
                 const d = new Date(l.started_at);
@@ -58,6 +59,10 @@
             })() : '';
             return '<tr><td class="text-nowrap">' + when + '</td><td>' + (l.status === 'success' ? 'прошла' : l.status === 'running' ? 'идёт' : 'не прошла') + '</td></tr>';
         }).join('') || '<tr><td colspan="2">Запусков ещё нет.</td></tr>';
+        if (body.innerHTML === next) return;
+        const top = box ? box.scrollTop : 0;
+        body.innerHTML = next;
+        if (box) box.scrollTop = top;
     }, 5000);
 
     let offset = 0;

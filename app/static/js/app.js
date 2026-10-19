@@ -62,11 +62,15 @@ function updateRunCount() {
     const cards = document.querySelectorAll('.mirror-card');
     const running = document.querySelectorAll('.mirror-card[data-status="running"]').length;
     const failed = document.querySelectorAll('.mirror-card[data-status="failed"]').length;
-    const enabled = cards.length;
+    const enabled = document.querySelectorAll('.mirror-card[data-enabled="1"]').length;
+    const visible = [...cards].filter(c => c.style.display !== 'none').length;
     const el = document.getElementById('runCount');
     if (el) el.textContent = running ? ('идёт ' + running) : '';
     const sum = document.getElementById('mirrorSummary');
-    if (sum) sum.textContent = 'включено ' + enabled + ' · в ошибке ' + failed + ' · качается ' + running;
+    if (!sum) return;
+    let text = 'включено ' + enabled + ' · в ошибке ' + failed + ' · качается ' + running;
+    if (visible !== cards.length) text += ' · показано ' + visible;
+    sum.textContent = text;
 }
 async function refreshLamp(el) {
     if (!el || !el.dataset.id) return;
@@ -474,6 +478,7 @@ async function pollProgress() {
     }
     updateRunCount();
     if (typeof applyMirrorView === 'function') applyMirrorView();
+    refreshRetries();
 }
 setInterval(pollProgress, 5000);
 pollProgress();
@@ -795,11 +800,12 @@ async function refreshRetries() {
         const res = await fetch('/api/sync/retries');
         if (!res.ok) return;
         const data = await res.json();
-        Object.keys(data).forEach(id => {
-            const el = document.getElementById('retry-' + id);
-            if (!el) return;
+        document.querySelectorAll('[id^="retry-"]').forEach(el => {
+            const id = el.id.replace('retry-', '');
+            const card = document.getElementById('card-' + id);
+            const failed = card && card.parentElement && card.parentElement.dataset.status === 'failed';
             const item = data[id] || {};
-            el.textContent = item.count ? (' · повтор ' + item.count + '/' + item.max) : '';
+            el.textContent = failed && item.count ? (' · повтор ' + item.count + '/' + item.max) : '';
         });
     } catch (e) {}
 }
