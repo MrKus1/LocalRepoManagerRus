@@ -185,16 +185,7 @@ async def _do_sync(mirror_id: int):
             root = Path(local_path)
             if mirror_type == "deb":
                 root = settings.STORAGE_ROOT / "public" / mirror_name
-            total = 0
-            if root.exists():
-                for path in root.rglob("*"):
-                    if path.is_file() and not path.is_symlink():
-                        try:
-                            total += path.stat().st_size
-                        except OSError:
-                            pass
-            await db.execute(update(Mirror).where(Mirror.id == mirror_id).values(size_bytes=total))
-            await db.commit()
+            asyncio.create_task(_save_size(mirror_id, root))
 
 
 @router.get("/retries")
@@ -209,38 +200,50 @@ async def sync_retries():
 
 
 @router.post("/{mirror_id}")
-async def start_sync(
-    mirror_id: int,
-    background_tasks: BackgroundTasks,
-    force: bool = False,
-    db: AsyncSession = Depends(get_db),
-):
-    mirror = await db.get(Mirror, mirror_id)
-    if not mirror:
-        raise HTTPException(status_code=404, detail="Зеркало не найдено")
+async def start_sync(mirror_id: int, force: bool = False):
+    result = await request_sync(mirror_id, force=force)
+    if not result.get("ok"):
+        raise HTTPException(status_code=result.get("status", 400), detail=result.get("detail"))
+    return {
+        "message": "В очереди" if result.get("queued") else "Синхронизация запущена",
+        "mirror_id": mirror_id,
+        "queued": bool(result.get("queued")),
+        "position": result.get("position"),
+    }
 
-    if mirror.status == SyncStatus.RUNNING.value and not force:
-        raise HTTPException(status_code=409, detail="Синхронизация уже выполняется")
 
-    process = get_process(mirror_id)
-    if process is not None and process.returncode is None:
-        raise HTTPException(status_code=409, detail="Синхронизация уже выполняется")
+async def _save_size(mirror_id: int, root: Path):
+    total = await asyncio.get_running_loop().run_in_executor(None, _du_bytes, root)
+    async with AsyncSessionLocal() as db:
+        await db.execute(update(Mirror).where(Mirror.id == mirror_id).values(size_bytes=total))
+        await db.commit()
 
-    if not force:
-        running = await db.execute(select(Mirror).where(Mirror.status == SyncStatus.RUNNING.value))
-        count = len(running.scalars().all())
-        limit = load_max_sync()
-        async with _queue_lock:
-            if count >= limit or _queue:
-                if mirror_id not in _queue:
-                    _queue.append(mirror_id)
-                mirror.status = "queued"
-                mirror.last_error = None
-                await db.commit()
-                return {"message": "В очереди", "mirror_id": mirror_id, "queued": True, "position": _queue.index(mirror_id) + 1}
 
-    background_tasks.add_task(_do_sync, mirror_id)
-    return {"message": "Синхронизация запущена", "mirror_id": mirror_id, "queued": False}
+async def request_sync(mirror_id: int, force: bool = False) -> dict:
+    """Старт сразу или постановка в очередь. Общий вход для кнопки и планировщика."""
+    async with AsyncSessionLocal() as db:
+        mirror = await db.get(Mirror, mirror_id)
+        if not mirror:
+            return {"ok": False, "detail": "Зеркало не найдено", "status": 404}
+        if mirror.status == SyncStatus.RUNNING.value and not force:
+            return {"ok": False, "detail": "Синхронизация уже выполняется", "status": 409}
+        process = get_process(mirror_id)
+        if process is not None and process.returncode is None:
+            return {"ok": False, "detail": "Синхронизация уже выполняется", "status": 409}
+        if not force:
+            running = await db.execute(select(Mirror).where(Mirror.status == SyncStatus.RUNNING.value))
+            count = len(running.scalars().all())
+            limit = load_max_sync()
+            async with _queue_lock:
+                if count >= limit or _queue:
+                    if mirror_id not in _queue:
+                        _queue.append(mirror_id)
+                    mirror.status = "queued"
+                    mirror.last_error = None
+                    await db.commit()
+                    return {"ok": True, "queued": True, "mirror_id": mirror_id, "position": _queue.index(mirror_id) + 1}
+        asyncio.create_task(_do_sync(mirror_id))
+        return {"ok": True, "queued": False, "mirror_id": mirror_id}
 
 
 async def _pump():
@@ -321,11 +324,14 @@ async def sync_progress(mirror_id: int, db: AsyncSession = Depends(get_db)):
     if mirror.type == "deb":
         root = settings.STORAGE_ROOT / "aptly"
         suffix = ".deb"
-    files, size = _count_packages(root, suffix)
-    if mirror.type == "deb":
-        cached = _count_cache.get(str(root))
-        if not cached or datetime.utcnow().timestamp() - cached[0] >= 60:
+    cached = _count_cache.get(str(root))
+    stale = not cached or datetime.utcnow().timestamp() - cached[0] >= 60
+    if stale:
+        if mirror.type == "deb":
             asyncio.get_running_loop().run_in_executor(None, refresh_deb_cache)
+        else:
+            asyncio.get_running_loop().run_in_executor(None, _count_packages, root, suffix)
+    files, size = (cached[1], cached[2]) if cached else (0, 0)
     if not size and mirror.size_bytes:
         size = mirror.size_bytes
     return {

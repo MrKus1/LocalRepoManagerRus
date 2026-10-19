@@ -338,7 +338,7 @@ async def delete_mirror(
     if not mirror:
         raise HTTPException(status_code=404, detail="Зеркало не найдено")
 
-    if mirror.status == SyncStatus.RUNNING.value:
+    if mirror.status in (SyncStatus.RUNNING.value, "queued"):
         raise HTTPException(status_code=409, detail="Нельзя удалить зеркало во время синхронизации")
 
     if delete_files and mirror.type == "deb":

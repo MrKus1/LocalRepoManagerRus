@@ -50,9 +50,10 @@ async def _tick():
         process = get_process(mirror.id)
         if sync_blocked() or mirror.status == SyncStatus.RUNNING.value or (process and process.returncode is None):
             continue
-        if running_now >= limit:
+        if mirror.status == "queued":
             continue
-        if mirror.status == SyncStatus.FAILED.value and mirror.updated_at:
+        over = running_now >= limit
+        if mirror.status == SyncStatus.FAILED.value and mirror.updated_at and not over:
             retry = load_retry()
             if retry["retry_max"] > 0:
                 stamp = mirror.updated_at.isoformat()
@@ -66,7 +67,7 @@ async def _tick():
                     retries[str(mirror.id)] = item
                     _save_retries(retries)
                     logger.info("Повторный sync %s, попытка %s/%s", mirror.name, item["count"], retry["retry_max"])
-                    asyncio.create_task(_do_sync(mirror.id))
+                    asyncio.create_task(request_sync(mirror.id))
                     running_now += 1
                     continue
         expr = (mirror.schedule or "").strip()
@@ -83,7 +84,7 @@ async def _tick():
             continue
         _fired.add(key)
         logger.info("Плановый sync %s", mirror.name)
-        asyncio.create_task(_do_sync(mirror.id))
+        asyncio.create_task(request_sync(mirror.id))
         running_now += 1
     cleanup = load_cleanup()
     expr = (cleanup.get("cron") or "").strip()
