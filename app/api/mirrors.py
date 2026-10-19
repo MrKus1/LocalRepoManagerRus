@@ -1,3 +1,4 @@
+import logging
 from typing import List
 from pathlib import Path
 import shutil
@@ -13,6 +14,8 @@ from app.schemas import MirrorCreate, MirrorUpdate, MirrorOut
 from app.config import settings
 from app.services.deb import deb_service
 from app.services.rpm import rpm_service
+
+logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/api/mirrors", tags=["mirrors"])
 
@@ -340,10 +343,12 @@ async def delete_mirror(
 
     if delete_files and mirror.type == "deb":
         try:
-            await deb_service.drop_mirror(mirror.name, mirror.distribution or "stable")
-            await deb_service.cleanup()
+            ok, msg = await deb_service.drop_mirror(mirror.name, mirror.distribution or "stable")
+            cok, cmsg = await deb_service.cleanup()
+            if not ok or not cok:
+                logger.warning("aptly cleanup %s: drop=%s cleanup=%s", mirror.name, msg, cmsg)
         except Exception:
-            pass
+            logger.exception("aptly cleanup failed for %s", mirror.name)
 
     await db.execute(sql_delete(SyncLog).where(SyncLog.mirror_id == mirror.id))
     await db.flush()

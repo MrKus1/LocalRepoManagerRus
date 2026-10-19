@@ -1,10 +1,10 @@
-# Repo Manager 1.1.8
+# Repo Manager 1.1.9
 
 Веб-менеджер локальных зеркал deb и rpm для закрытого контура. Ставится на Oracle Linux 10, отдаёт пакеты через nginx и умеет публиковать свои пакеты.
 
-![Главная](docs/images/Main.png)
+Интерфейс на порту 8000, клиенты ходят на порт 80.
 
-## Возможности
+## Что умеет
 
 - Зеркала RPM через `dnf reposync` и DEB через `aptly`.
 - Свои локальные репозитории: rpm, deb и простой каталог файлов.
@@ -41,12 +41,12 @@ systemctl status repo-manager
 curl -s http://127.0.0.1:8000/health
 ```
 
-Веб-интерфейс: `http://IP`. Клиентские репозитории: `http://IP/repo/...` через nginx.
+Веб-интерфейс: `http://IP:8000`. Клиентские репозитории: `http://IP/repo/...` через nginx.
 
 ## Каталоги
 
 | Путь | Назначение |
-| --- | --- |
+|---|---|
 | `/opt/repo-manager` | код и venv |
 | `/var/lib/repo-manager/mirrors` | зеркала |
 | `/var/lib/repo-manager/public` | публикация aptly |
@@ -56,8 +56,6 @@ curl -s http://127.0.0.1:8000/health
 | `/var/lib/repo-manager/proxy.json` | прокси, порог диска, очистка кэша |
 
 ## Как завести зеркало
-
-![Добавление зеркала](docs/images/add_mirror.png)
 
 RPM: URL должен открывать каталог с `repodata/repomd.xml`.
 
@@ -92,13 +90,7 @@ baseurl=http://IP/repo/rpm/OL9_BaseOS
 deb http://IP/repo/deb/Ubuntu22_jammy jammy main
 ```
 
-## Страница зеркала
-
-![Зеркало](docs/images/mirror.png)
-
 ## Меню
-
-![Меню](docs/images/menu.png)
 
 - Прокси — исходящий `http://user:pass@proxy:3128` и исключения.
 - Место — минимум свободных ГБ. Пустое поле снимает ограничение, sync не стартует ниже порога.
@@ -120,4 +112,4 @@ systemctl start repo-manager
 
 ## Чего нет
 
-Авторизации в интерфейсе нет. Подпись репозиториев и уведомления не включены.
+Авторизации в интерфейсе нет. Не ставить порт 8000 в общую сеть. Подпись репозиториев и уведомления не включены.

@@ -14,7 +14,7 @@ from app.services.deb import deb_service
 from app.services.rpm import rpm_service
 from app.services.procs import set_mirror, get_process, get_progress
 from app.services.filelog import mirror_logger
-from app.services.proxy import sync_blocked
+from app.services.proxy import sync_blocked, load_max_sync
 
 router = APIRouter(prefix="/api/sync", tags=["sync"])
 
@@ -64,6 +64,26 @@ def refresh_deb_cache():
     _count_cache[str(root)] = (now, files, size)
 
 
+async def _watch_disk(mirror_id: int, flag: dict):
+    """Останавливает sync, если свободно меньше порога."""
+    import signal
+    while not flag.get("done"):
+        await asyncio.sleep(30)
+        if flag.get("done"):
+            return
+        reason = sync_blocked()
+        if not reason:
+            continue
+        flag["reason"] = reason + " Sync остановлен."
+        process = get_process(mirror_id)
+        if process is not None and process.returncode is None:
+            try:
+                os.killpg(os.getpgid(process.pid), signal.SIGTERM)
+            except (ProcessLookupError, PermissionError, OSError):
+                pass
+        return
+
+
 async def _do_sync(mirror_id: int):
     """Фоновая задача синхронизации"""
     async with AsyncSessionLocal() as db:
@@ -95,6 +115,8 @@ async def _do_sync(mirror_id: int):
         set_mirror(mirror_id)
         flog = mirror_logger(mirror_name)
         flog.info("sync started")
+        flag = {"done": False}
+        watcher = asyncio.create_task(_watch_disk(mirror_id, flag))
 
         try:
             if mirror_type == "deb":
@@ -126,6 +148,13 @@ async def _do_sync(mirror_id: int):
             success = False
             message = str(e)[:500]
             flog.exception("sync failed")
+        finally:
+            flag["done"] = True
+            watcher.cancel()
+
+        if flag.get("reason"):
+            success = False
+            message = flag["reason"]
 
         status = SyncStatus.SUCCESS.value if success else SyncStatus.FAILED.value
         await db.execute(
@@ -178,6 +207,13 @@ async def start_sync(
 
     if mirror.status == SyncStatus.RUNNING.value and not force:
         raise HTTPException(status_code=409, detail="Синхронизация уже выполняется")
+
+    if not force:
+        running = await db.execute(select(Mirror).where(Mirror.status == SyncStatus.RUNNING.value))
+        count = len(running.scalars().all())
+        limit = load_max_sync()
+        if count >= limit:
+            raise HTTPException(status_code=429, detail=f"Уже идёт {count} sync, лимит {limit}")
 
     process = get_process(mirror_id)
     if process is not None and process.returncode is None:

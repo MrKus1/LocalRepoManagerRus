@@ -11,7 +11,7 @@ from app.database import AsyncSessionLocal
 from app.models import Mirror, SyncStatus
 from app.api.cache import cleanup_cache, load_cleanup
 from app.services.procs import get_process
-from app.services.proxy import sync_blocked
+from app.services.proxy import sync_blocked, load_max_sync
 
 logger = logging.getLogger(__name__)
 _task = None
@@ -44,9 +44,13 @@ async def _tick():
     async with AsyncSessionLocal() as db:
         result = await db.execute(select(Mirror).where(Mirror.enabled == True))
         mirrors = result.scalars().all()
+    running_now = sum(1 for item in mirrors if item.status == SyncStatus.RUNNING.value)
+    limit = load_max_sync()
     for mirror in mirrors:
         process = get_process(mirror.id)
         if sync_blocked() or mirror.status == SyncStatus.RUNNING.value or (process and process.returncode is None):
+            continue
+        if running_now >= limit:
             continue
         if mirror.status == SyncStatus.FAILED.value and mirror.updated_at:
             stamp = mirror.updated_at.isoformat()
@@ -56,6 +60,7 @@ async def _tick():
                 _save_retries(retries)
                 logger.info("Повторный sync %s через час после ошибки", mirror.name)
                 asyncio.create_task(_do_sync(mirror.id))
+                running_now += 1
                 continue
         expr = (mirror.schedule or "").strip()
         if not expr:
@@ -72,6 +77,7 @@ async def _tick():
         _fired.add(key)
         logger.info("Плановый sync %s", mirror.name)
         asyncio.create_task(_do_sync(mirror.id))
+        running_now += 1
     cleanup = load_cleanup()
     expr = (cleanup.get("cron") or "").strip()
     days = str(cleanup.get("days") or "").strip()

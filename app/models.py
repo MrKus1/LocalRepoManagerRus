@@ -2,7 +2,7 @@ from datetime import datetime
 from enum import Enum
 from typing import Optional
 
-from sqlalchemy import String, Text, Boolean, DateTime, Integer, ForeignKey, JSON
+from sqlalchemy import String, Text, Boolean, DateTime, Integer, ForeignKey, JSON, BigInteger
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from app.database import Base
@@ -50,7 +50,7 @@ class Mirror(Base):
     status: Mapped[str] = mapped_column(String(20), default=SyncStatus.IDLE.value)
     last_sync: Mapped[Optional[datetime]] = mapped_column(DateTime, nullable=True)
     last_error: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
-    size_bytes: Mapped[Optional[int]] = mapped_column(Integer, nullable=True)
+    size_bytes: Mapped[Optional[int]] = mapped_column(BigInteger, nullable=True)
     
     created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
     updated_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
@@ -111,7 +111,7 @@ class Package(Base):
     name: Mapped[str] = mapped_column(String(150), index=True)
     version: Mapped[str] = mapped_column(String(100))
     architecture: Mapped[str] = mapped_column(String(50))
-    size_bytes: Mapped[int] = mapped_column(Integer)
+    size_bytes: Mapped[int] = mapped_column(BigInteger)
     
     repo_id: Mapped[int] = mapped_column(ForeignKey("local_repos.id"))
     repo: Mapped["LocalRepo"] = relationship("LocalRepo", back_populates="packages")

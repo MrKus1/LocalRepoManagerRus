@@ -100,6 +100,37 @@ def save_min_free_gb(value: str) -> str:
     return data["min_free_gb"]
 
 
+def load_max_sync() -> int:
+    data = {}
+    if SETTINGS_FILE.exists():
+        try:
+            data = json.loads(SETTINGS_FILE.read_text())
+        except (OSError, json.JSONDecodeError):
+            data = {}
+    try:
+        value = int(data.get("max_sync", 2))
+    except (TypeError, ValueError):
+        return 2
+    return max(1, value)
+
+
+def save_max_sync(value) -> int:
+    data = {}
+    if SETTINGS_FILE.exists():
+        try:
+            data = json.loads(SETTINGS_FILE.read_text())
+        except (OSError, json.JSONDecodeError):
+            data = {}
+    try:
+        parsed = int(str(value).strip() or "2")
+    except ValueError:
+        parsed = 2
+    data["max_sync"] = max(1, parsed)
+    SETTINGS_FILE.parent.mkdir(parents=True, exist_ok=True)
+    SETTINGS_FILE.write_text(json.dumps(data))
+    return data["max_sync"]
+
+
 def free_gb() -> float:
     path = Path("/var/lib/repo-manager")
     path.mkdir(parents=True, exist_ok=True)

@@ -179,7 +179,10 @@ fetch('/api/proxy').then(r => r.json()).then(d => {
 });
 
 fetch('/api/min-free').then(r => r.json()).then(d => {
-    document.getElementById('minFree').value = d.min_free_gb || '';
+    const minFree = document.getElementById('minFree');
+    const maxSync = document.getElementById('maxSync');
+    if (minFree) minFree.value = d.min_free_gb || '';
+    if (maxSync) maxSync.value = d.max_sync || 2;
 });
 
 async function saveProxy() {
@@ -199,10 +202,10 @@ async function saveMinFree() {
     const res = await fetch('/api/min-free', {
         method: 'PUT',
         headers: {'Content-Type': 'application/json'},
-        body: JSON.stringify({min_free_gb: document.getElementById('minFree').value})
+        body: JSON.stringify({min_free_gb: document.getElementById('minFree').value, max_sync: document.getElementById('maxSync').value})
     });
     if (!res.ok) { toast('Не удалось сохранить порог', false); return; }
-    toast('Порог сохранён');
+    toast('Настройки места сохранены');
 }
 
 fetch('/api/disk').then(r => r.json()).then(d => {

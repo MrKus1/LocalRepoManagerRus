@@ -56,7 +56,10 @@
             <div class="modal-body">
                 <label class="form-label">Минимум свободно, ГБ</label>
                 <input id="minFree" class="form-control" placeholder="пусто = без лимита">
-                <p class="small text-muted mt-2 mb-0">Пустой порог — без ограничения. Новый sync не стартует, если свободно меньше.</p>
+                <p class="small text-muted mt-2 mb-3">Пустой порог — без ограничения. Новый sync не стартует, если свободно меньше. Во время sync проверка каждые 30 секунд, ниже порога процесс останавливается.</p>
+                <label class="form-label">Одновременно sync</label>
+                <input id="maxSync" class="form-control" type="number" min="1" value="2">
+                <p class="small text-muted mt-2 mb-0">Сколько зеркал могут качаться сразу. Остальные ждут.</p>
             </div>
             <div class="modal-footer"><button class="btn btn-primary btn-sm" type="button" onclick="saveMinFree()">Сохранить</button></div>
         </div>

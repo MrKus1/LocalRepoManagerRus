@@ -12,7 +12,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select, update
 
 from app.config import settings
-from app.services.proxy import load_proxy, save_proxy, load_min_free_gb, save_min_free_gb, load_min_free_gb, save_min_free_gb
+from app.services.proxy import load_proxy, save_proxy, load_min_free_gb, save_min_free_gb, load_max_sync, save_max_sync
 from app.database import init_db, get_db, AsyncSessionLocal
 from app.models import Mirror, LocalRepo, SyncLog, SyncStatus, CacheRepo
 from app.services.scheduler import start_scheduler, stop_scheduler
@@ -65,7 +65,7 @@ async def lifespan(app: FastAPI):
 app = FastAPI(
     title="Repo Manager",
     description="Менеджер зеркалируемых репозиториев deb и rpm + публикация локальных пакетов",
-    version="1.1.8",
+    version="1.1.9",
     lifespan=lifespan,
 )
 
@@ -137,12 +137,15 @@ async def put_proxy(payload: dict):
 
 @app.get("/api/min-free")
 async def get_min_free():
-    return {"min_free_gb": load_min_free_gb()}
+    return {"min_free_gb": load_min_free_gb(), "max_sync": load_max_sync()}
 
 
 @app.put("/api/min-free")
 async def put_min_free(payload: dict):
-    return {"min_free_gb": save_min_free_gb(str(payload.get("min_free_gb") or ""))}
+    return {
+        "min_free_gb": save_min_free_gb(str(payload.get("min_free_gb") or "")),
+        "max_sync": save_max_sync(payload.get("max_sync", 2)),
+    }
 
 
 @app.get("/api/disk")
