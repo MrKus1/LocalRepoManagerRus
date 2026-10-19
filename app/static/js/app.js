@@ -59,9 +59,14 @@ function menuGo(name) {
     return true;
 }
 function updateRunCount() {
-    const n = document.querySelectorAll('.mirror-card[data-status="running"]').length;
+    const cards = document.querySelectorAll('.mirror-card');
+    const running = document.querySelectorAll('.mirror-card[data-status="running"]').length;
+    const failed = document.querySelectorAll('.mirror-card[data-status="failed"]').length;
+    const enabled = cards.length;
     const el = document.getElementById('runCount');
-    if (el) el.textContent = n ? ('идёт ' + n) : '';
+    if (el) el.textContent = running ? ('идёт ' + running) : '';
+    const sum = document.getElementById('mirrorSummary');
+    if (sum) sum.textContent = 'включено ' + enabled + ' · в ошибке ' + failed + ' · качается ' + running;
 }
 async function refreshLamp(el) {
     if (!el || !el.dataset.id) return;
@@ -183,6 +188,10 @@ fetch('/api/min-free').then(r => r.json()).then(d => {
     const maxSync = document.getElementById('maxSync');
     if (minFree) minFree.value = d.min_free_gb || '';
     if (maxSync) maxSync.value = d.max_sync || 2;
+    const retryMinutes = document.getElementById('retryMinutes');
+    const retryMax = document.getElementById('retryMax');
+    if (retryMinutes) retryMinutes.value = d.retry_minutes || 60;
+    if (retryMax) retryMax.value = d.retry_max ?? 3;
 });
 
 async function saveProxy() {
@@ -202,7 +211,7 @@ async function saveMinFree() {
     const res = await fetch('/api/min-free', {
         method: 'PUT',
         headers: {'Content-Type': 'application/json'},
-        body: JSON.stringify({min_free_gb: document.getElementById('minFree').value, max_sync: document.getElementById('maxSync').value})
+        body: JSON.stringify({min_free_gb: document.getElementById('minFree').value, max_sync: document.getElementById('maxSync').value, retry_minutes: document.getElementById('retryMinutes').value, retry_max: document.getElementById('retryMax').value})
     });
     if (!res.ok) { toast('Не удалось сохранить порог', false); return; }
     toast('Настройки места сохранены');
@@ -730,6 +739,10 @@ function loadUpdateStatus() {
         const info = document.getElementById('updateInfo');
         if (info) info.textContent = d.has_backup ? 'Есть резервная копия для отката.' : 'Резервной копии ещё нет.';
     }).catch(() => {});
+    fetch('/api/update/log').then(r => r.json()).then(d => {
+        const log = document.getElementById('updateLog');
+        if (log) log.textContent = (d.lines || []).join('\n') || 'Журнал обновлений пуст.';
+    }).catch(() => {});
 }
 document.getElementById('updateModal')?.addEventListener('show.bs.modal', loadUpdateStatus);
 
@@ -775,3 +788,20 @@ function waitForRestart() {
         if (tries > 40) clearInterval(timer);
     }, 2000);
 }
+
+
+async function refreshRetries() {
+    try {
+        const res = await fetch('/api/sync/retries');
+        if (!res.ok) return;
+        const data = await res.json();
+        Object.keys(data).forEach(id => {
+            const el = document.getElementById('retry-' + id);
+            if (!el) return;
+            const item = data[id] || {};
+            el.textContent = item.count ? (' · повтор ' + item.count + '/' + item.max) : '';
+        });
+    } catch (e) {}
+}
+setInterval(refreshRetries, 10000);
+refreshRetries();

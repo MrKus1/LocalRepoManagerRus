@@ -14,7 +14,7 @@ from app.services.deb import deb_service
 from app.services.rpm import rpm_service
 from app.services.procs import set_mirror, get_process, get_progress
 from app.services.filelog import mirror_logger
-from app.services.proxy import sync_blocked, load_max_sync
+from app.services.proxy import sync_blocked, load_max_sync, load_retry
 
 router = APIRouter(prefix="/api/sync", tags=["sync"])
 
@@ -194,6 +194,17 @@ async def _do_sync(mirror_id: int):
             await db.commit()
 
 
+@router.get("/retries")
+async def sync_retries():
+    from app.services.scheduler import _retries
+    retry = load_retry()
+    data = _retries()
+    return {
+        key: {"count": value.get("count", 0) if isinstance(value, dict) else 0, "max": retry["retry_max"]}
+        for key, value in data.items()
+    }
+
+
 @router.post("/{mirror_id}")
 async def start_sync(
     mirror_id: int,
@@ -293,3 +304,4 @@ async def get_sync_logs(mirror_id: int, db: AsyncSession = Depends(get_db)):
         .limit(20)
     )
     return result.scalars().all()
+

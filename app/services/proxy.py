@@ -149,3 +149,41 @@ def sync_blocked() -> str:
     if free < limit:
         return f"Свободно {free:.1f} ГБ, порог {limit:.0f} ГБ. Sync не запущен."
     return ""
+
+
+def load_retry() -> dict:
+    data = {}
+    if SETTINGS_FILE.exists():
+        try:
+            data = json.loads(SETTINGS_FILE.read_text())
+        except (OSError, json.JSONDecodeError):
+            data = {}
+    try:
+        minutes = int(data.get("retry_minutes", 60))
+    except (TypeError, ValueError):
+        minutes = 60
+    try:
+        limit = int(data.get("retry_max", 3))
+    except (TypeError, ValueError):
+        limit = 3
+    return {"retry_minutes": max(1, minutes), "retry_max": max(0, limit)}
+
+
+def save_retry(minutes, limit) -> dict:
+    data = {}
+    if SETTINGS_FILE.exists():
+        try:
+            data = json.loads(SETTINGS_FILE.read_text())
+        except (OSError, json.JSONDecodeError):
+            data = {}
+    try:
+        data["retry_minutes"] = max(1, int(str(minutes).strip() or "60"))
+    except ValueError:
+        data["retry_minutes"] = 60
+    try:
+        data["retry_max"] = max(0, int(str(limit).strip() or "3"))
+    except ValueError:
+        data["retry_max"] = 3
+    SETTINGS_FILE.parent.mkdir(parents=True, exist_ok=True)
+    SETTINGS_FILE.write_text(json.dumps(data))
+    return {"retry_minutes": data["retry_minutes"], "retry_max": data["retry_max"]}

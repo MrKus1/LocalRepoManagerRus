@@ -58,7 +58,7 @@
             })() : '';
             return '<tr><td class="text-nowrap">' + when + '</td><td>' + (l.status === 'success' ? 'прошла' : l.status === 'running' ? 'идёт' : 'не прошла') + '</td></tr>';
         }).join('') || '<tr><td colspan="2">Запусков ещё нет.</td></tr>';
-    }, 10000);
+    }, 5000);
 
     let offset = 0;
     const pageSize = 50;

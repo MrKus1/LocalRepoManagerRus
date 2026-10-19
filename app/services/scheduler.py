@@ -11,7 +11,7 @@ from app.database import AsyncSessionLocal
 from app.models import Mirror, SyncStatus
 from app.api.cache import cleanup_cache, load_cleanup
 from app.services.procs import get_process
-from app.services.proxy import sync_blocked, load_max_sync
+from app.services.proxy import sync_blocked, load_max_sync, load_retry
 
 logger = logging.getLogger(__name__)
 _task = None
@@ -53,15 +53,22 @@ async def _tick():
         if running_now >= limit:
             continue
         if mirror.status == SyncStatus.FAILED.value and mirror.updated_at:
-            stamp = mirror.updated_at.isoformat()
-            age = (datetime.utcnow() - mirror.updated_at).total_seconds()
-            if age >= 3600 and retries.get(str(mirror.id)) != stamp:
-                retries[str(mirror.id)] = stamp
-                _save_retries(retries)
-                logger.info("Повторный sync %s через час после ошибки", mirror.name)
-                asyncio.create_task(_do_sync(mirror.id))
-                running_now += 1
-                continue
+            retry = load_retry()
+            if retry["retry_max"] > 0:
+                stamp = mirror.updated_at.isoformat()
+                item = retries.get(str(mirror.id)) or {}
+                if item.get("stamp") != stamp:
+                    item = {"stamp": stamp, "count": 0}
+                age = (datetime.utcnow() - mirror.updated_at).total_seconds()
+                wait = retry["retry_minutes"] * 60
+                if item["count"] < retry["retry_max"] and age >= wait * (item["count"] + 1):
+                    item["count"] += 1
+                    retries[str(mirror.id)] = item
+                    _save_retries(retries)
+                    logger.info("Повторный sync %s, попытка %s/%s", mirror.name, item["count"], retry["retry_max"])
+                    asyncio.create_task(_do_sync(mirror.id))
+                    running_now += 1
+                    continue
         expr = (mirror.schedule or "").strip()
         if not expr:
             continue

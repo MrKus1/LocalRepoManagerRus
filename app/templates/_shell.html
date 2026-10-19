@@ -59,6 +59,15 @@
                 <p class="small text-muted mt-2 mb-3">Пустой порог — без ограничения. Новый sync не стартует, если свободно меньше. Во время sync проверка каждые 30 секунд, ниже порога процесс останавливается.</p>
                 <label class="form-label">Одновременно sync</label>
                 <input id="maxSync" class="form-control" type="number" min="1" value="2">
+            </div>
+            <div class="mb-3">
+                <label class="form-label">Повтор после ошибки, минут</label>
+                <input id="retryMinutes" class="form-control" type="number" min="1" value="60">
+            </div>
+            <div class="mb-3">
+                <label class="form-label">Не больше попыток</label>
+                <input id="retryMax" class="form-control" type="number" min="0" value="3">
+                <div class="form-text">0 отключает повтор. Счётчик сбрасывается после новой ошибки.</div>
                 <p class="small text-muted mt-2 mb-0">Сколько зеркал могут качаться сразу. Остальные ждут.</p>
             </div>
             <div class="modal-footer"><button class="btn btn-primary btn-sm" type="button" onclick="saveMinFree()">Сохранить</button></div>
@@ -73,6 +82,7 @@
                 <p class="small text-muted">Сейчас <span id="updateCurrent">…</span>. Загрузите архив RM-x.y.z-offline.tar.gz новее текущей версии.</p>
                 <input id="updateFile" class="form-control mb-2" type="file" accept=".tar.gz,.tgz">
                 <div id="updateInfo" class="small mb-2"></div>
+                <pre id="updateLog" class="small bg-light p-2" style="max-height: 180px; overflow: auto">Журнал обновлений пуст.</pre>
                 <p class="small text-muted mb-0">Служба остановится на минуту и поднимется сама. Зеркала, база и .env не трогаются. Если идёт sync, обновление не стартует.</p>
             </div>
             <div class="modal-footer">

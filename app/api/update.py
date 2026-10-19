@@ -51,6 +51,15 @@ async def update_status():
     }
 
 
+@router.get("/log")
+async def update_log():
+    path = Path("/var/lib/repo-manager/logs/update.log")
+    if not path.exists():
+        return {"lines": []}
+    lines = path.read_text(errors="replace").splitlines()[-40:]
+    return {"lines": lines}
+
+
 @router.post("/upload")
 async def upload_archive(file: UploadFile = File(...)):
     name = file.filename or ""
