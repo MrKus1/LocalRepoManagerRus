@@ -25,6 +25,8 @@ footer.app-footer { margin-top: auto; background: #fff; border-top: 1px solid #d
 .badge-deb { background: #a80030; }
 .badge-rpm { background: #e44d26; }
 .filter-btn { white-space: nowrap; border-radius: .5rem !important; background: #fff; }
+.pick-bar { display: flex; align-items: center; gap: .6rem; flex-wrap: wrap; background: #fff; border: 1px solid #dee2e6; border-radius: 10px; padding: .55rem .8rem; }
+.pick-mirror { width: 1.05rem; height: 1.05rem; cursor: pointer; flex: 0 0 auto; }
 .filter-btn.active { background: #e7f1ff; color: #0d6efd; border-color: #9ec5fe; }
 .disk-slot { min-width: 0; }
 .disk-bar { height: 6px; background: #e9ecef; border-radius: 99px; width: 160px; max-width: 100%; margin-left: auto; }
