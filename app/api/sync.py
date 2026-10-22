@@ -40,8 +40,6 @@ def _count_packages(root: Path, suffix: str):
     cached = _count_cache.get(key)
     if cached and now - cached[0] < 60:
         return cached[1], cached[2]
-    if suffix == ".deb":
-        return (cached[1], cached[2]) if cached else (0, 0)
     files = 0
     size = _du_bytes(root)
     if root.exists():
@@ -51,19 +49,6 @@ def _count_packages(root: Path, suffix: str):
                     files += 1
     _count_cache[key] = (now, files, size)
     return files, size
-
-
-def refresh_deb_cache():
-    root = settings.STORAGE_ROOT / "aptly"
-    now = datetime.utcnow().timestamp()
-    files = 0
-    size = _du_bytes(root)
-    if root.exists():
-        for dirpath, _, filenames in os.walk(root):
-            for name in filenames:
-                if name.endswith(".deb"):
-                    files += 1
-    _count_cache[str(root)] = (now, files, size)
 
 
 async def _watch_disk(mirror_id: int, flag: dict):
@@ -319,18 +304,16 @@ async def sync_progress(mirror_id: int, db: AsyncSession = Depends(get_db)):
     if not mirror:
         raise HTTPException(status_code=404, detail="Зеркало не найдено")
     item = dict(get_progress(mirror_id))
-    root = Path(mirror.local_path)
-    suffix = ".rpm"
     if mirror.type == "deb":
-        root = settings.STORAGE_ROOT / "aptly"
+        root = settings.STORAGE_ROOT / "public" / mirror.name
         suffix = ".deb"
+    else:
+        root = Path(mirror.local_path)
+        suffix = ".rpm"
     cached = _count_cache.get(str(root))
     stale = not cached or datetime.utcnow().timestamp() - cached[0] >= 60
     if stale:
-        if mirror.type == "deb":
-            asyncio.get_running_loop().run_in_executor(None, refresh_deb_cache)
-        else:
-            asyncio.get_running_loop().run_in_executor(None, _count_packages, root, suffix)
+        asyncio.get_running_loop().run_in_executor(None, _count_packages, root, suffix)
     files, size = (cached[1], cached[2]) if cached else (0, 0)
     if not size and mirror.size_bytes:
         size = mirror.size_bytes
@@ -352,7 +335,7 @@ async def get_sync_logs(mirror_id: int, db: AsyncSession = Depends(get_db)):
         select(SyncLog)
         .where(SyncLog.mirror_id == mirror_id)
         .order_by(SyncLog.started_at.desc())
-        .limit(20)
+        .limit(50)
     )
     return result.scalars().all()
 

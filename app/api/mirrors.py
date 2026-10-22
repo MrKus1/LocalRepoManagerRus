@@ -214,19 +214,6 @@ async def prune_old(mirror_id: int, db: AsyncSession = Depends(get_db)):
     if err:
         raise HTTPException(status_code=500, detail=err)
     return {"removed": removed}
-async def reachable(mirror_id: int, db: AsyncSession = Depends(get_db)):
-    mirror = await db.get(Mirror, mirror_id)
-    if not mirror:
-        raise HTTPException(status_code=404, detail="Зеркало не найдено")
-    if mirror.type == "rpm":
-        path = Path(mirror.local_path) / "repodata"
-        ok = path.is_dir() and any(path.glob("repomd.xml"))
-        detail = str(path / "repomd.xml")
-    else:
-        path = settings.STORAGE_ROOT / "public" / mirror.name / "dists" / (mirror.distribution or "stable") / "Release"
-        ok = path.is_file()
-        detail = str(path)
-    return {"ok": ok, "path": detail}
 
 
 @router.post("/cleanup-aptly")

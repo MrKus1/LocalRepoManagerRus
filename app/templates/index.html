@@ -5,7 +5,7 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Менеджер репозиториев</title>
     <link href="/static/css/bootstrap.min.css" rel="stylesheet">
-    <link href="/static/css/app.css?v=9" rel="stylesheet">
+    <link href="/static/css/app.css?v=12" rel="stylesheet">
 </head>
 <body>
 <div class="page-main">
@@ -18,26 +18,27 @@
         <li class="nav-item"><button class="nav-link" data-tab="local" type="button">Локальные ({{ local_repos|length }})</button></li>
     </ul>
     <div id="tab-mirrors">
-    <div class="row mb-3 align-items-center">
-        <div class="col">
+    <div class="page-head">
+        <div>
             <h2 class="mb-0">Зеркала</h2>
-<div id="mirrorSummary" class="small text-muted mt-1">…</div>
+            <div id="mirrorSummary" class="small text-muted mt-1">{% if mirrors %}…{% else %}список пуст{% endif %}</div>
         </div>
-        <div class="col-auto d-flex flex-wrap gap-2 justify-content-end">
+        <div class="page-actions">
             <button class="btn btn-outline-primary btn-sm" type="button" onclick="syncAll()">Sync все</button>
             <a class="btn btn-outline-secondary btn-sm" href="/api/mirrors/export">Экспорт</a>
-            <button class="btn btn-outline-secondary btn-sm" onclick="document.getElementById('importFile').click()">Импорт</button>
+            <button class="btn btn-outline-secondary btn-sm" type="button" onclick="document.getElementById('importFile').click()">Импорт</button>
             <input type="file" id="importFile" accept=".txt,.csv" hidden onchange="importMirrors(this)">
             <button class="btn btn-primary btn-sm" data-bs-toggle="modal" data-bs-target="#addMirrorModal">+ Добавить зеркало</button>
         </div>
     </div>
+    {% if mirrors %}
     <div class="mb-2 d-flex align-items-center gap-2 flex-wrap">
         <button class="btn btn-outline-primary btn-sm filter-btn active" data-filter="all">Все</button>
         <button class="btn btn-outline-secondary btn-sm filter-btn" data-filter="rpm">RPM</button>
         <button class="btn btn-outline-secondary btn-sm filter-btn" data-filter="deb">DEB</button>
         <button class="btn btn-outline-secondary btn-sm filter-btn" data-filter="failed">С ошибкой</button>
         <button class="btn btn-outline-secondary btn-sm filter-btn" data-filter="running">Идёт</button>
-        <input id="mirrorSearch" class="form-control form-control-sm ms-2" style="max-width: 420px" placeholder="Поиск зеркал...">
+        <input id="mirrorSearch" class="form-control form-control-sm mirror-search" placeholder="Поиск зеркал...">
     </div>
     <div class="pick-bar mb-4" id="pickBar">
         <label class="form-check mb-0 d-flex align-items-center gap-2">
@@ -48,7 +49,6 @@
         <button class="btn btn-outline-primary btn-sm" type="button" id="syncPicked" onclick="syncPicked()" disabled>Синхронизировать выбранные</button>
         <button class="btn btn-outline-danger btn-sm" type="button" id="deletePicked" onclick="deletePicked()" disabled>Удалить выбранные</button>
     </div>
-
     <div class="row">
         {% for m in mirrors %}
         <div class="col-md-6 col-lg-4 mb-3 mirror-card" data-type="{{ m.type }}" data-status="{{ m.status }}" data-enabled="{{ '1' if m.enabled else '0' }}" data-name="{{ m.name|lower }}">
@@ -90,49 +90,47 @@
                 </div>
             </div>
         </div>
-        {% else %}
-        <div class="col-12">
-            <div class="alert alert-info d-flex justify-content-between align-items-center">
-                <span>Зеркал пока нет.</span>
-                <button class="btn btn-primary btn-sm" data-bs-toggle="modal" data-bs-target="#addMirrorModal">Добавить</button>
-            </div>
-        </div>
         {% endfor %}
     </div>
+    {% else %}
+    <div class="empty-state">
+        <h3>Зеркал пока нет</h3>
+        <p>Добавьте первое зеркало RPM или DEB. Пакеты появятся после Sync.</p>
+        <button class="btn btn-primary btn-sm" data-bs-toggle="modal" data-bs-target="#addMirrorModal">Добавить зеркало</button>
+    </div>
+    {% endif %}
     </div>
 
     <div id="tab-cache" class="d-none">
-    <div class="row mb-3 align-items-center">
-        <div class="col">
+    <div class="page-head">
+        <div>
             <h2 class="mb-0">Кэш по запросу</h2>
             <div class="small text-muted">Пакет скачивается только когда его запросил клиент. Это не полное зеркало.</div>
         </div>
-        <div class="col-auto">
+        <div class="page-actions">
             <button class="btn btn-primary btn-sm" type="button" onclick="document.getElementById('cacheForm').classList.toggle('d-none')">+ Добавить кэш</button>
         </div>
     </div>
     <form id="cacheForm" class="card card-body mb-3 d-none" onsubmit="return createCache(event)">
-        <div class="row g-2">
-            <div class="col-md-3"><input class="form-control" name="name" placeholder="имя" required></div>
-            <div class="col-md-2"><select class="form-select" name="type" id="cacheType" onchange="toggleCacheFields()"><option value="rpm">rpm</option><option value="deb">deb</option></select></div>
-            <div class="col-md-5"><input class="form-control" name="source_url" placeholder="http://mirror/path" required></div>
-            <div class="col-md-2"><button class="btn btn-primary w-100" type="submit">Создать</button></div>
-        </div>
-        <div class="row g-2 mt-1 d-none" id="cacheDebFields">
-            <div class="col-md-3"><input class="form-control" name="distribution" placeholder="distribution, bookworm"></div>
-            <div class="col-md-3"><input class="form-control" name="component" placeholder="component, main"></div>
+        <div class="row g-3">
+            <div class="col-md-4"><label class="form-label">Имя</label><input class="form-control" name="name" placeholder="имя" required></div>
+            <div class="col-md-2"><label class="form-label">Тип</label><select class="form-select" name="type" id="cacheType" onchange="toggleCacheFields()"><option value="rpm">rpm</option><option value="deb">deb</option></select></div>
+            <div class="col-md-6"><label class="form-label">URL источника</label><input class="form-control" name="source_url" placeholder="http://mirror/path" required></div>
+            <div class="col-md-4 d-none" id="cacheDebDist"><label class="form-label">Distribution</label><input class="form-control" name="distribution" placeholder="bookworm"></div>
+            <div class="col-md-4 d-none" id="cacheDebComp"><label class="form-label">Component</label><input class="form-control" name="component" placeholder="main"></div>
+            <div class="col-12"><button class="btn btn-primary btn-sm" type="submit">Создать</button></div>
         </div>
     </form>
     <div class="row" id="cacheList"></div>
     </div>
 
     <div id="tab-local" class="d-none">
-    <div class="row mb-4 align-items-center">
-        <div class="col">
+    <div class="page-head">
+        <div>
             <h2 id="local" class="mb-0">Локальные репозитории</h2>
             <div class="small text-muted">Свои пакеты и файлы, без зеркалирования.</div>
         </div>
-        <div class="col-auto">
+        <div class="page-actions">
             <button class="btn btn-primary btn-sm" data-bs-toggle="modal" data-bs-target="#addLocalRepoModal">+ Создать локальный репо</button>
         </div>
     </div>
@@ -167,9 +165,10 @@
         </div>
         {% else %}
         <div class="col-12">
-            <div class="alert alert-info d-flex justify-content-between align-items-center">
-                <span>Локальных репозиториев пока нет.</span>
-                <button class="btn btn-success btn-sm" data-bs-toggle="modal" data-bs-target="#addLocalRepoModal">Создать</button>
+            <div class="empty-state">
+                <h3>Локальных репозиториев нет</h3>
+                <p>Сюда кладут свои пакеты и файлы, без зеркалирования.</p>
+                <button class="btn btn-primary btn-sm" data-bs-toggle="modal" data-bs-target="#addLocalRepoModal">Создать</button>
             </div>
         </div>
         {% endfor %}
@@ -181,9 +180,240 @@
 
 {% include '_shell.html' %}
 
+<div class="modal fade" id="cacheLineModal" tabindex="-1">
+    <div class="modal-dialog modal-dialog-centered modal-dialog-scrollable">
+        <div class="modal-content">
+            <div class="modal-header">
+                <h5 class="modal-title">Строка для клиента</h5>
+                <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
+            </div>
+            <div class="modal-body">
+                <pre class="mb-0 cache-line" id="cacheLineBody"></pre>
+            </div>
+        </div>
+    </div>
+</div>
+
+<div class="modal fade" id="cacheEditModal" tabindex="-1">
+    <div class="modal-dialog modal-dialog-centered modal-dialog-scrollable">
+        <div class="modal-content">
+            <form onsubmit="return saveCacheUrl(event)">
+                <div class="modal-header">
+                    <h5 class="modal-title">Ссылка источника</h5>
+                    <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
+                </div>
+                <div class="modal-body">
+                    <input type="hidden" id="cacheEditId">
+                    <label class="form-label">URL источника</label>
+                    <input class="form-control" id="cacheEditUrl" required placeholder="http://mirror/path">
+                </div>
+                <div class="modal-footer">
+                    <button class="btn btn-primary btn-sm" type="submit">Сохранить</button>
+                </div>
+            </form>
+        </div>
+    </div>
+</div>
+
+<div class="modal fade" id="cacheFilesModal" tabindex="-1">
+    <div class="modal-dialog modal-lg modal-dialog-centered modal-dialog-scrollable">
+        <div class="modal-content">
+            <div class="modal-header">
+                <h5 class="modal-title" id="cacheFilesTitle">Файлы</h5>
+                <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
+            </div>
+            <div class="modal-body">
+                <table class="table table-sm mb-0">
+                    <thead><tr><th>Путь</th><th class="text-end text-nowrap">Размер</th></tr></thead>
+                    <tbody id="cacheFilesBody"></tbody>
+                </table>
+            </div>
+        </div>
+    </div>
+</div>
+
+<div class="modal fade" id="editMirrorModal" tabindex="-1">
+    <div class="modal-dialog modal-dialog-centered modal-dialog-scrollable">
+        <div class="modal-content">
+            <form id="editMirrorForm">
+                <div class="modal-header">
+                    <h5 class="modal-title">Настройки зеркала</h5>
+                    <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
+                </div>
+                <div class="modal-body">
+                    <input type="hidden" name="id" id="editId">
+                    <div class="mb-3">
+                        <label class="form-label">Имя</label>
+                        <input class="form-control" id="editName" disabled>
+                    </div>
+                    <div class="mb-3">
+                        <label class="form-label">URL источника</label>
+                        <input class="form-control" name="source_url" id="editUrl" required>
+                    </div>
+                    <div class="mb-3">
+                        <label class="form-label">Distribution</label>
+                        <input class="form-control" name="distribution" id="editDistribution">
+                    </div>
+                    <div class="mb-3">
+                        <label class="form-label">Components</label>
+                        <input class="form-control" name="components" id="editComponents">
+                    </div>
+                    <div class="mb-3">
+                        <label class="form-label">Architectures</label>
+                        <input class="form-control" name="architectures" id="editArch">
+                    </div>
+                    <div class="mb-3">
+                        <label class="form-label">Repoid</label>
+                        <input class="form-control" name="repoid" id="editRepoid">
+                    </div>
+                    <div class="mb-3">
+                        <label class="form-label">Cron</label>
+                        <input class="form-control" name="schedule" id="editSchedule" placeholder="0 3 * * *" oninput="cronHint(this, 'editCronHint')">
+                        <div class="form-text" id="editCronHint">пример: 0 3 * * * — каждый день в 03:00</div>
+                    </div>
+                    <div class="mb-3">
+                        <label class="form-label">Описание</label>
+                        <textarea class="form-control" name="description" id="editDescription" rows="2"></textarea>
+                    </div>
+                    <div class="form-check">
+                        <input class="form-check-input" type="checkbox" id="editEnabled">
+                        <label class="form-check-label" for="editEnabled">Включено</label>
+                    </div>
+                </div>
+                <div class="modal-footer">
+                    <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Отмена</button>
+                    <button type="submit" class="btn btn-primary">Сохранить</button>
+                </div>
+            </form>
+        </div>
+    </div>
+</div>
+
+<!-- Modal: Add Mirror -->
+<div class="modal fade" id="addMirrorModal" tabindex="-1">
+    <div class="modal-dialog modal-dialog-centered modal-dialog-scrollable">
+        <div class="modal-content">
+            <form id="addMirrorForm">
+                <div class="modal-header">
+                    <h5 class="modal-title">Новое зеркало</h5>
+                    <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
+                </div>
+                <div class="modal-body">
+                    <div class="mb-3">
+                        <label class="form-label">Имя</label>
+                        <input type="text" class="form-control" name="name" required>
+                    </div>
+                    <div class="mb-3">
+                        <label class="form-label">Тип</label>
+                        <select class="form-select" name="type" id="mirrorType">
+                            <option value="rpm">RPM</option>
+                            <option value="deb">DEB</option>
+                        </select>
+                    </div>
+                    <div class="mb-3">
+                        <label class="form-label">URL источника</label>
+                        <input type="url" class="form-control" name="source_url" required
+                               placeholder="https://...">
+                    </div>
+                    <div class="mb-3 deb-only" style="display:none;">
+                        <label class="form-label">Distribution (jammy, bookworm...)</label>
+                        <input type="text" class="form-control" name="distribution">
+                    </div>
+                    <div class="mb-3 deb-only" style="display:none;">
+                        <label class="form-label">Components (main,universe)</label>
+                        <input type="text" class="form-control" name="components" value="main">
+                    </div>
+                    <div class="mb-3">
+                        <label class="form-label">Architectures</label>
+                        <input type="text" class="form-control" name="architectures" id="addArch" value="x86_64">
+                    </div>
+                    <div class="mb-3 rpm-only">
+                        <label class="form-label">Repoid (для reposync, опционально)</label>
+                        <input type="text" class="form-control" name="repoid">
+                    </div>
+                    <div class="mb-3">
+                        <label class="form-label">Cron-расписание (опционально)</label>
+                        <input type="text" class="form-control" name="schedule" placeholder="0 3 * * *" oninput="cronHint(this, 'addCronHint')">
+                        <div class="form-text" id="addCronHint">пример: 0 3 * * * — каждый день в 03:00</div>
+                    </div>
+                    <div class="mb-3">
+                        <label class="form-label">Описание</label>
+                        <textarea class="form-control" name="description" rows="2"></textarea>
+                    </div>
+                </div>
+                <div class="modal-footer">
+                    <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Отмена</button>
+                    <button type="submit" class="btn btn-primary">Создать</button>
+                </div>
+            </form>
+        </div>
+    </div>
+</div>
+
+<!-- Modal: Add Local Repo -->
+<div class="modal fade" id="addLocalRepoModal" tabindex="-1">
+    <div class="modal-dialog modal-dialog-centered modal-dialog-scrollable">
+        <div class="modal-content">
+            <form id="addLocalRepoForm">
+                <div class="modal-header">
+                    <h5 class="modal-title">Новый локальный репозиторий</h5>
+                    <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
+                </div>
+                <div class="modal-body">
+                    <div class="mb-3">
+                        <label class="form-label">Имя</label>
+                        <input type="text" class="form-control" name="name" required>
+                    </div>
+                    <div class="mb-3">
+                        <label class="form-label">Тип</label>
+                        <select class="form-select" name="type">
+                            <option value="rpm">RPM</option>
+                            <option value="deb">DEB</option>
+                            <option value="files">Файлы</option>
+                        </select>
+                    </div>
+                    <div class="mb-3">
+                        <label class="form-label">Distribution (для deb)</label>
+                        <input type="text" class="form-control" name="distribution">
+                    </div>
+                    <div class="mb-3">
+                        <label class="form-label">Описание</label>
+                        <textarea class="form-control" name="description" rows="2"></textarea>
+                    </div>
+                </div>
+                <div class="modal-footer">
+                    <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Отмена</button>
+                    <button type="submit" class="btn btn-success">Создать</button>
+                </div>
+            </form>
+        </div>
+    </div>
+</div>
+
+<div class="modal fade" id="contentsModal" tabindex="-1">
+    <div class="modal-dialog modal-lg modal-dialog-centered modal-dialog-scrollable">
+        <div class="modal-content">
+            <div class="modal-header">
+                <h5 class="modal-title" id="contentsTitle">Содержимое</h5>
+                <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
+            </div>
+            <div class="modal-body">
+                <input id="contentsQuery" class="form-control mb-2" placeholder="поиск по имени пакета">
+                <div id="contentsMeta" class="small text-muted mb-2"></div>
+                <div id="contentsList" style="max-height: 420px; overflow: auto;"></div>
+                <div class="d-flex justify-content-between align-items-center mt-2">
+                    <button class="btn btn-sm btn-outline-secondary" id="prevPage" type="button">Назад</button>
+                    <span id="pageInfo" class="small text-muted"></span>
+                    <button class="btn btn-sm btn-outline-secondary" id="nextPage" type="button">Дальше</button>
+                </div>
+            </div>
+        </div>
+    </div>
+</div>
+
 <script src="/static/js/bootstrap.bundle.min.js"></script>
-<script src="/static/js/app.js?v=9"></script>
-<script src="/static/js/pick.js?v=9"></script>
+<script src="/static/js/app.js?v=12"></script>
+<script src="/static/js/pick.js?v=12"></script>
 
 </body>
 </html>

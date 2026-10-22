@@ -54,7 +54,21 @@ pre { white-space: pre-wrap; }
     .navbar-brand { font-size: 1rem; }
 }
 
-.card-actions { flex-wrap: nowrap; }
+.card-actions { flex-wrap: wrap; }
 .card-actions .btn { white-space: nowrap; }
 .card .card-body { padding-top: 1.1rem; }
-.card .badge { margin-right: 14px; }
+.card .badge { margin-right: 18px; }
+.mirror-card .card-title { min-width: 0; flex: 1 1 auto; }
+.mirror-card .card-title a { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.back-link { display: inline-block; margin-bottom: .6rem; text-decoration: none; }
+.page-head { display: flex; justify-content: space-between; align-items: center; gap: .75rem 1rem; flex-wrap: wrap; margin-bottom: 1rem; }
+.page-actions { display: flex; flex-wrap: wrap; gap: .5rem; margin-left: auto; justify-content: flex-end; }
+.mirror-search { flex: 1 1 220px; min-width: 180px; max-width: 420px; }
+.empty-state { background: #fff; border: 1px dashed #ced4da; border-radius: 12px; padding: 2.75rem 1.5rem; text-align: center; }
+.empty-state h3 { font-size: 1.15rem; margin: 0 0 .35rem; }
+.empty-state p { color: #6c757d; margin: 0 0 1rem; }
+.modal-body .form-control,
+.modal-body .form-select,
+.modal-body textarea { width: 100%; max-width: 100%; }
+.update-log { max-height: 180px; overflow: auto; background: #f8f9fa; border-radius: 8px; padding: .6rem .75rem; margin: 0; }
+.modal-footer { gap: .5rem; }

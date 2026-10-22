@@ -65,10 +65,13 @@ async def lifespan(app: FastAPI):
     logger.info("Shutting down...")
 
 
+BASE_DIR = Path(__file__).resolve().parent
+APP_VERSION = (BASE_DIR.parent / "VERSION").read_text().strip() if (BASE_DIR.parent / "VERSION").exists() else "0"
+
 app = FastAPI(
     title="Repo Manager",
     description="Менеджер зеркалируемых репозиториев deb и rpm + публикация локальных пакетов",
-    version="1.2.5",
+    version=APP_VERSION,
     lifespan=lifespan,
 )
 
@@ -81,7 +84,6 @@ app.include_router(cache.serve)
 app.include_router(update_api.router)
 
 # Static & Templates
-BASE_DIR = Path(__file__).resolve().parent
 app.mount("/static", StaticFiles(directory=BASE_DIR / "static"), name="static")
 templates = Jinja2Templates(directory=BASE_DIR / "templates")
 
@@ -100,6 +102,7 @@ async def index(request: Request, db: AsyncSession = Depends(get_db)):
         {
             "mirrors": mirrors_list,
             "local_repos": repos_list,
+            "version": APP_VERSION,
         },
     )
 
@@ -125,7 +128,7 @@ async def mirror_page(mirror_id: int, request: Request, db: AsyncSession = Depen
     return templates.TemplateResponse(
         request,
         "mirror.html",
-        {"mirror": mirror, "logs": logs.scalars().all(), "client_snippet": client_snippet},
+        {"mirror": mirror, "logs": logs.scalars().all(), "client_snippet": client_snippet, "version": APP_VERSION},
     )
 
 

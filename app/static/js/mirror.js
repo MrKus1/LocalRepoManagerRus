@@ -30,15 +30,26 @@
         lamp.title = d.ok ? 'nginx отдаёт' : 'nginx не отдаёт ' + (d.http_code || '');
     });
 
+    let lastStatus = root.dataset.status;
     setInterval(async () => {
         const res = await fetch('/api/sync/' + id + '/progress');
         if (!res.ok) return;
         const data = await res.json();
+        const prev = lastStatus;
+        lastStatus = data.status;
         setButtons(data.status);
         const lamp = document.getElementById('lamp');
-        if (lamp && data.status === 'running') {
+        if (!lamp) return;
+        if (data.status === 'running' || data.status === 'queued') {
             lamp.className = 'reach-lamp lamp-yellow';
-            lamp.title = 'синхронизируется';
+            lamp.title = data.status === 'queued' ? 'в очереди' : 'синхронизируется';
+            return;
+        }
+        if (prev === 'running' || prev === 'queued' || lamp.className.indexOf('lamp-yellow') !== -1) {
+            const check = await fetch('/api/mirrors/' + id + '/client-check');
+            const d = await check.json().catch(() => ({ok: false}));
+            lamp.className = 'reach-lamp ' + (d.ok ? 'lamp-green' : 'lamp-red');
+            lamp.title = d.ok ? 'nginx отдаёт' : 'nginx не отдаёт ' + (d.http_code || '');
         }
     }, 5000);
 

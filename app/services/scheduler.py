@@ -39,6 +39,7 @@ def _save_retries(data: dict):
 
 
 async def _tick():
+    from app.api.sync import request_sync
     now = datetime.now().replace(second=0, microsecond=0)
     retries = _retries()
     async with AsyncSessionLocal() as db:

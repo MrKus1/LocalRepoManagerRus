@@ -304,8 +304,11 @@ async function importMirrors(input) {
 
 function toggleCacheFields() {
     const type = document.getElementById('cacheType');
-    const box = document.getElementById('cacheDebFields');
-    if (type && box) box.classList.toggle('d-none', type.value !== 'deb');
+    const deb = type && type.value === 'deb';
+    ['cacheDebDist', 'cacheDebComp'].forEach(id => {
+        const box = document.getElementById(id);
+        if (box) box.classList.toggle('d-none', !deb);
+    });
 }
 async function createCache(e) {
     e.preventDefault();
@@ -327,7 +330,7 @@ fetch('/api/cache/').then(r => r.json()).then(rows => {
             : 'deb http://' + location.hostname + '/cache/' + r.name + ' ' + (r.distribution || 'bookworm') + ' ' + (r.component || 'main');
         const safe = line.replace(/</g, '');
         return '<div class="col-md-6 col-lg-4 mb-3"><div class="card h-100"><div class="card-body"><h5>' + r.name + '</h5><p class="small text-muted text-uppercase">' + r.type + '</p><p class="small text-truncate" title="' + r.source_url + '">источник: ' + r.source_url + '</p><div class="d-flex flex-wrap gap-1"><button class="btn btn-sm btn-outline-secondary" type="button" onclick="showCacheLine(' + r.id + ')">Строка</button><button class="btn btn-sm btn-outline-secondary" type="button" onclick="copyCache(' + r.id + ')">Копировать</button><div class="dropdown"><button class="btn btn-sm btn-outline-secondary dropdown-toggle" data-bs-toggle="dropdown" data-bs-boundary="viewport" type="button">Ещё</button><ul class="dropdown-menu"><li><button class="dropdown-item" type="button" onclick="downloadCache(' + r.id + ', \'' + r.name + '\', \'' + r.type + '\')">Скачать</button></li><li><button class="dropdown-item" type="button" onclick="editCache(' + r.id + ')">Ссылка</button></li><li><button class="dropdown-item" type="button" onclick="showCacheFiles(' + r.id + ', \'' + r.name + '\')">Файлы</button></li><li><button class="dropdown-item text-danger" type="button" onclick="deleteCache(' + r.id + ', \'' + r.name + '\')">Удалить</button></li></ul></div></div></div></div></div>';
-    }).join('') || '<div class="col-12"><div class="alert alert-info">Кэшей нет. Пакет скачается при первом запросе клиента.</div></div>';
+    }).join('') || '<div class="col-12"><div class="empty-state"><h3>Кэшей нет</h3><p>Пакет скачается, когда клиент первый раз его запросит.</p></div></div>';
     rows.forEach(r => {
         const line = r.type === 'rpm'
             ? '[' + r.name + ']' + nl + 'name=' + r.name + nl + 'baseurl=http://' + location.hostname + '/cache/' + r.name + '/' + nl + 'gpgcheck=0' + nl + 'enabled=1'
@@ -398,7 +401,7 @@ async function cleanupAptly() {
     });
 }
 document.querySelectorAll('.reach-lamp').forEach(async el => {
-    if (el.dataset.status === 'running') {
+    if (el.dataset.status === 'running' || el.dataset.status === 'queued') {
         el.className = 'reach-lamp lamp-yellow';
         el.title = 'синхронизируется';
         return;
@@ -420,7 +423,7 @@ function applyMirrorView() {
         const filterOk = filter === 'all'
             || card.dataset.type === filter
             || (filter === 'failed' && card.dataset.status === 'failed')
-            || (filter === 'running' && card.dataset.status === 'running');
+            || (filter === 'running' && (card.dataset.status === 'running' || card.dataset.status === 'queued'));
         card.style.display = nameOk && filterOk ? '' : 'none';
     });
 }
@@ -461,10 +464,10 @@ async function pollProgress() {
         const delBtn = card && card.querySelector('.delete-item');
         if (delBtn) delBtn.disabled = data.status === 'running' || data.status === 'queued';
         const lamp = card && card.querySelector('.reach-lamp');
-        if (lamp && data.status === 'running') {
+        if (lamp && (data.status === 'running' || data.status === 'queued')) {
             lamp.className = 'reach-lamp lamp-yellow';
-            lamp.title = 'синхронизируется';
-        } else if (lamp && data.status !== 'running') {
+            lamp.title = data.status === 'queued' ? 'в очереди' : 'синхронизируется';
+        } else if (lamp) {
             refreshLamp(lamp);
         }
         const err = document.getElementById('err-' + id);
@@ -725,6 +728,10 @@ if (mt) mt.addEventListener('change', function() {
     const isDeb = this.value === 'deb';
     document.querySelectorAll('.deb-only').forEach(el => el.style.display = isDeb ? 'block' : 'none');
     document.querySelectorAll('.rpm-only').forEach(el => el.style.display = isDeb ? 'none' : 'block');
+    const arch = document.getElementById('addArch');
+    if (arch && (arch.value === 'x86_64' || arch.value === 'amd64' || arch.value === '')) {
+        arch.value = isDeb ? 'amd64' : 'x86_64';
+    }
 });
 
 const amf = document.getElementById('addMirrorForm');
