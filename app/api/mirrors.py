@@ -158,7 +158,23 @@ async def update_mirror(
     if not mirror:
         raise HTTPException(status_code=404, detail="Зеркало не найдено")
 
-    for field, value in data.model_dump(exclude_unset=True).items():
+    payload = data.model_dump(exclude_unset=True)
+    if mirror.type == "deb" and any(key in payload for key in ("source_url", "distribution", "components", "architectures")):
+        if mirror.status in (SyncStatus.RUNNING.value, "queued"):
+            raise HTTPException(status_code=409, detail="Нельзя менять настройки DEB во время синхронизации")
+        ok, msg = await deb_service.reconfigure(
+            name=mirror.name,
+            url=payload.get("source_url", mirror.source_url),
+            distribution=payload.get("distribution", mirror.distribution) or "stable",
+            components=payload.get("components", mirror.components) or "main",
+            architectures=payload.get("architectures", mirror.architectures) or "amd64",
+            old_distribution=mirror.distribution or "stable",
+            old_components=mirror.components or "main",
+        )
+        if not ok:
+            raise HTTPException(status_code=500, detail=f"aptly не принял настройки: {(msg or '')[:500]}")
+
+    for field, value in payload.items():
         setattr(mirror, field, value)
 
     await db.flush()

@@ -20,6 +20,7 @@ router = APIRouter(prefix="/api/sync", tags=["sync"])
 
 _count_cache = {}
 _queue: list[int] = []
+_starting: set[int] = set()
 _queue_lock = asyncio.Lock()
 
 
@@ -73,6 +74,13 @@ async def _watch_disk(mirror_id: int, flag: dict):
 
 async def _do_sync(mirror_id: int):
     """Фоновая задача синхронизации"""
+    try:
+        await _run_sync(mirror_id)
+    finally:
+        _starting.discard(mirror_id)
+
+
+async def _run_sync(mirror_id: int):
     async with AsyncSessionLocal() as db:
         mirror = await db.get(Mirror, mirror_id)
         if not mirror:
@@ -96,6 +104,7 @@ async def _do_sync(mirror_id: int):
         local_path = mirror.local_path
         repoid = mirror.repoid
         await db.commit()
+        _starting.discard(mirror_id)
 
         success = False
         message = ""
@@ -204,22 +213,27 @@ async def _save_size(mirror_id: int, root: Path):
         await db.commit()
 
 
+async def _occupied(db: AsyncSession) -> int:
+    running = await db.execute(select(Mirror.id).where(Mirror.status == SyncStatus.RUNNING.value))
+    ids = {row[0] for row in running.all()}
+    return len(ids | _starting)
+
+
 async def request_sync(mirror_id: int, force: bool = False) -> dict:
-    """Старт сразу или постановка в очередь. Общий вход для кнопки и планировщика."""
-    async with AsyncSessionLocal() as db:
-        mirror = await db.get(Mirror, mirror_id)
-        if not mirror:
-            return {"ok": False, "detail": "Зеркало не найдено", "status": 404}
-        if mirror.status == SyncStatus.RUNNING.value and not force:
-            return {"ok": False, "detail": "Синхронизация уже выполняется", "status": 409}
-        process = get_process(mirror_id)
-        if process is not None and process.returncode is None:
-            return {"ok": False, "detail": "Синхронизация уже выполняется", "status": 409}
-        if not force:
-            running = await db.execute(select(Mirror).where(Mirror.status == SyncStatus.RUNNING.value))
-            count = len(running.scalars().all())
-            limit = load_max_sync()
-            async with _queue_lock:
+    """Старт сразу или постановка в очередь. Слот занимается до записи running в базу."""
+    async with _queue_lock:
+        async with AsyncSessionLocal() as db:
+            mirror = await db.get(Mirror, mirror_id)
+            if not mirror:
+                return {"ok": False, "detail": "Зеркало не найдено", "status": 404}
+            if mirror_id in _starting or (mirror.status == SyncStatus.RUNNING.value and not force):
+                return {"ok": False, "detail": "Синхронизация уже выполняется", "status": 409}
+            process = get_process(mirror_id)
+            if process is not None and process.returncode is None:
+                return {"ok": False, "detail": "Синхронизация уже выполняется", "status": 409}
+            if not force:
+                count = await _occupied(db)
+                limit = load_max_sync()
                 if count >= limit or _queue:
                     if mirror_id not in _queue:
                         _queue.append(mirror_id)
@@ -227,25 +241,27 @@ async def request_sync(mirror_id: int, force: bool = False) -> dict:
                     mirror.last_error = None
                     await db.commit()
                     return {"ok": True, "queued": True, "mirror_id": mirror_id, "position": _queue.index(mirror_id) + 1}
-        asyncio.create_task(_do_sync(mirror_id))
-        return {"ok": True, "queued": False, "mirror_id": mirror_id}
+            _starting.add(mirror_id)
+            asyncio.create_task(_do_sync(mirror_id))
+            return {"ok": True, "queued": False, "mirror_id": mirror_id}
 
 
 async def _pump():
     """Запускает следующие из очереди, пока есть свободный слот."""
     async with _queue_lock:
         async with AsyncSessionLocal() as db:
-            running = await db.execute(select(Mirror).where(Mirror.status == SyncStatus.RUNNING.value))
-            count = len(running.scalars().all())
+            count = await _occupied(db)
             limit = load_max_sync()
-            started = 0
-            while _queue and count + started < limit:
+            while _queue and count < limit:
                 mirror_id = _queue.pop(0)
+                if mirror_id in _starting:
+                    continue
                 mirror = await db.get(Mirror, mirror_id)
                 if not mirror or not mirror.enabled or mirror.status == SyncStatus.RUNNING.value:
                     continue
+                _starting.add(mirror_id)
                 asyncio.create_task(_do_sync(mirror_id))
-                started += 1
+                count += 1
 
 
 async def restore_queue():

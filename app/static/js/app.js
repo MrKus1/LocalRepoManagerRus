@@ -69,6 +69,10 @@ function updateRunCount() {
     if (el) el.textContent = running ? ('идёт ' + running) : '';
     const sum = document.getElementById('mirrorSummary');
     if (!sum) return;
+    if (!cards.length) {
+        sum.textContent = 'список пуст';
+        return;
+    }
     let text = 'включено ' + enabled + ' · в ошибке ' + failed + ' · качается ' + running;
     if (visible !== cards.length) text += ' · показано ' + visible;
     sum.textContent = text;

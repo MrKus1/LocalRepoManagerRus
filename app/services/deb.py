@@ -75,6 +75,40 @@ class DebService:
             return False, err or out
         return True, out
 
+    async def reconfigure(
+        self,
+        name: str,
+        url: str,
+        distribution: str,
+        components: str,
+        architectures: str,
+        old_distribution: str,
+        old_components: str,
+    ) -> Tuple[bool, str]:
+        """Применяет URL и архитектуру в aptly. Смена дистрибутива или компонентов создаёт зеркало заново."""
+        architectures = (architectures or "amd64").replace(" ", "")
+        components = components or "main"
+        distribution = distribution or "stable"
+        exists = name in await self.list_mirrors()
+        if not exists:
+            return await self.create_mirror(name, url, distribution, components, architectures)
+
+        if distribution != (old_distribution or "stable") or components != (old_components or "main"):
+            code, out, err = await run_cmd([self.aptly, "mirror", "drop", "-force", name])
+            if code != 0:
+                return False, err or out
+            return await self.create_mirror(name, url, distribution, components, architectures)
+
+        code, out, err = await run_cmd([
+            self.aptly, "mirror", "edit",
+            f"-archive-url={url}",
+            f"-architectures={architectures}",
+            name,
+        ])
+        if code != 0:
+            return False, err or out
+        return True, out
+
     async def update_mirror(self, name: str) -> Tuple[bool, str]:
         """aptly mirror update name"""
         cmd = [self.aptly, "mirror", "update", name]
