@@ -46,7 +46,7 @@ async def create_local_repo(data: LocalRepoCreate, db: AsyncSession = Depends(ge
         local_path=str(local_path),
         distribution=data.distribution,
         component=data.component or "main",
-        architectures=data.architectures or "amd64",
+        architectures=data.architectures or ("x86_64" if data.type == "rpm" else "amd64"),
         gpg_key_id=data.gpg_key_id,
     )
 

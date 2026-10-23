@@ -1,5 +1,6 @@
 import json
 import os
+import re
 import shutil
 from pathlib import Path
 
@@ -8,6 +9,27 @@ from app.config import settings
 SETTINGS_FILE = Path("/var/lib/repo-manager/proxy.json")
 PROXIES_FILE = Path("/var/lib/repo-manager/repo-proxies.json")
 NGINX_PROXY_CONF = Path("/var/lib/repo-manager/repo-manager-proxies.conf")
+
+_USERINFO = re.compile(r"^([a-z][a-z0-9+.-]*://[^:/@]+):([^@/]+)@(.+)$", re.I)
+
+
+def redact_proxy_url(url: str) -> str:
+    match = _USERINFO.match(url or "")
+    if not match:
+        return url or ""
+    return f"{match.group(1)}:***@{match.group(3)}"
+
+
+def restore_proxy_url(saved: str, submitted: str) -> str:
+    """Форма присылает уже скрытый пароль. Тот же адрес не затирает секрет в файле."""
+    text = (submitted or "").strip()
+    if ":***@" not in text:
+        return text
+    old = _USERINFO.match(saved or "")
+    new = _USERINFO.match(text)
+    if old and new and old.group(1) == new.group(1) and old.group(3) == new.group(3):
+        return saved
+    return text
 
 
 def load_repo_proxies() -> list:
@@ -53,7 +75,8 @@ def save_proxy(proxy_url: str, no_proxy: str) -> dict:
             data = json.loads(SETTINGS_FILE.read_text())
         except (OSError, json.JSONDecodeError):
             data = {}
-    data["proxy_url"] = proxy_url.strip()
+    current = load_proxy().get("proxy_url") or ""
+    data["proxy_url"] = restore_proxy_url(current, proxy_url)
     data["no_proxy"] = no_proxy.strip() or "127.0.0.1,localhost"
     SETTINGS_FILE.parent.mkdir(parents=True, exist_ok=True)
     SETTINGS_FILE.write_text(json.dumps(data))

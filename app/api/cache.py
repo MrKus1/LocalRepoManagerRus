@@ -8,7 +8,7 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.config import settings
-from app.guards import inside
+from app.guards import inside, name_error, url_error
 from app.database import get_db
 from app.models import CacheRepo
 import json
@@ -84,13 +84,14 @@ async def put_cleanup(payload: dict):
     raw["cache_cleanup_cron"] = cron
     raw["cache_max_age_days"] = days
     Path("/var/lib/repo-manager/proxy.json").write_text(json.dumps(raw))
-    return {"cron": cron, "days": days, "proxy_url": saved.get("proxy_url", "")}
+    from app.services.proxy import redact_proxy_url
+    return {"cron": cron, "days": days, "proxy_url": redact_proxy_url(saved.get("proxy_url", ""))}
 
 
 @router.post("/cleanup/run")
 async def run_cleanup():
     days = int(load_cleanup().get("days") or 14)
-    return cleanup_cache(days)
+    return await asyncio.get_running_loop().run_in_executor(None, cleanup_cache, days)
 
 
 @router.get("/")
@@ -115,8 +116,12 @@ async def create_cache(payload: dict, db: AsyncSession = Depends(get_db)):
     name = (payload.get("name") or "").strip()
     typ = (payload.get("type") or "").strip()
     url = (payload.get("source_url") or "").strip().rstrip("/")
-    if not name or typ not in ("deb", "rpm") or not url.startswith("http"):
-        raise HTTPException(status_code=400, detail="Нужны имя, тип deb/rpm и http URL")
+    err = name_error(name) or url_error(url)
+    if err or typ not in ("deb", "rpm"):
+        raise HTTPException(status_code=400, detail=err or "Нужны имя, тип deb/rpm и http URL")
+    root = settings.STORAGE_ROOT / "cache" / name
+    if not inside(root, settings.STORAGE_ROOT / "cache"):
+        raise HTTPException(status_code=400, detail="Небезопасный путь кэша")
     exists = await db.execute(select(CacheRepo).where(CacheRepo.name == name))
     if exists.scalar_one_or_none():
         raise HTTPException(status_code=400, detail="Кэш с таким именем уже есть")
@@ -141,8 +146,9 @@ async def update_cache(cache_id: int, payload: dict, db: AsyncSession = Depends(
     if not row:
         raise HTTPException(status_code=404, detail="Кэш не найден")
     url = (payload.get("source_url") or "").strip().rstrip("/")
-    if not url.startswith("http"):
-        raise HTTPException(status_code=400, detail="Нужен http URL")
+    err = url_error(url)
+    if err:
+        raise HTTPException(status_code=400, detail=err)
     row.source_url = url
     await db.flush()
     return {"id": row.id, "source_url": row.source_url}

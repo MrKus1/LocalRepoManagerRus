@@ -127,7 +127,7 @@ class SyncLog(Base):
     __tablename__ = "sync_logs"
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True, index=True)
-    mirror_id: Mapped[int] = mapped_column(ForeignKey("mirrors.id"))
+    mirror_id: Mapped[int] = mapped_column(ForeignKey("mirrors.id", ondelete="CASCADE"))
     started_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
     finished_at: Mapped[Optional[datetime]] = mapped_column(DateTime, nullable=True)
     status: Mapped[str] = mapped_column(String(20))

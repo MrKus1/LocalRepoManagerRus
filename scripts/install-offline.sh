@@ -209,6 +209,10 @@ SUDO
 chmod 440 /etc/sudoers.d/repo-manager-update
 
 echo "==> Nginx"
+mkdir -p /var/lib/repo-manager
+if [[ ! -f /var/lib/repo-manager/api-allow.conf ]]; then
+    cp "$INSTALL_DIR/scripts/api-allow.conf" /var/lib/repo-manager/api-allow.conf
+fi
 cp "$INSTALL_DIR/scripts/nginx-repo-manager.conf" /etc/nginx/conf.d/repo-manager.conf
 nginx -t && systemctl enable --now nginx && systemctl reload nginx || echo "ВНИМАНИЕ: nginx не запустился"
 

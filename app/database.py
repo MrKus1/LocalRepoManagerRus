@@ -43,3 +43,8 @@ async def init_db():
         await conn.execute(text(
             "CREATE INDEX IF NOT EXISTS ix_sync_logs_mirror_id ON sync_logs (mirror_id)"
         ))
+        await conn.execute(text("ALTER TABLE sync_logs DROP CONSTRAINT IF EXISTS sync_logs_mirror_id_fkey"))
+        await conn.execute(text(
+            "ALTER TABLE sync_logs ADD CONSTRAINT sync_logs_mirror_id_fkey "
+            "FOREIGN KEY (mirror_id) REFERENCES mirrors(id) ON DELETE CASCADE"
+        ))

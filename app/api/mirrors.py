@@ -1,4 +1,6 @@
 import logging
+import time
+import asyncio
 from typing import List
 from pathlib import Path
 import shutil
@@ -19,6 +21,7 @@ from app.services.rpm import rpm_service
 logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/api/mirrors", tags=["mirrors"])
+_rpm_list_cache: dict[str, tuple] = {}
 
 
 def _check_name(name: str) -> None:
@@ -38,6 +41,27 @@ def _check_fields(payload: dict) -> None:
         raise HTTPException(status_code=400, detail=err)
 
 
+def _package_arch_ok(line: str, architectures: str | None) -> bool:
+    allowed = {"all", "noarch"}
+    for item in (architectures or "amd64").replace(",", " ").split():
+        if item.strip():
+            allowed.add(item.strip())
+    return any(line.endswith("_" + arch) for arch in allowed)
+
+
+def _scan_rpms(root: Path) -> tuple[list[dict], int]:
+    rows = []
+    size = 0
+    for path in root.rglob("*.rpm"):
+        if not path.is_file():
+            continue
+        file_size = path.stat().st_size
+        size += file_size
+        rows.append({"name": path.name, "size_bytes": file_size, "relpath": str(path.relative_to(root))})
+    rows.sort(key=lambda item: item["name"].lower())
+    return rows, size
+
+
 @router.get("/", response_model=List[MirrorOut])
 async def list_mirrors(db: AsyncSession = Depends(get_db)):
     result = await db.execute(select(Mirror).order_by(Mirror.name))
@@ -55,6 +79,7 @@ async def create_mirror(data: MirrorCreate, db: AsyncSession = Depends(get_db)):
     local_path = settings.MIRRORS_DIR / data.type / data.name
     _check_inside(local_path, settings.MIRRORS_DIR)
     local_path.mkdir(parents=True, exist_ok=True)
+    architectures = data.architectures or ("x86_64" if data.type == "rpm" else "amd64")
 
     mirror = Mirror(
         name=data.name,
@@ -63,7 +88,7 @@ async def create_mirror(data: MirrorCreate, db: AsyncSession = Depends(get_db)):
         source_url=data.source_url,
         distribution=data.distribution,
         components=data.components,
-        architectures=data.architectures or "amd64",
+        architectures=architectures,
         repoid=data.repoid,
         local_path=str(local_path),
         schedule=data.schedule,
@@ -81,7 +106,7 @@ async def create_mirror(data: MirrorCreate, db: AsyncSession = Depends(get_db)):
                 url=data.source_url,
                 distribution=data.distribution,
                 components=data.components or "main",
-                architectures=data.architectures or "amd64",
+                architectures=architectures,
             )
             if not ok:
                 raise HTTPException(status_code=500, detail=f"Ошибка aptly: {msg}")
@@ -95,24 +120,6 @@ async def create_mirror(data: MirrorCreate, db: AsyncSession = Depends(get_db)):
         if aptly_created:
             await deb_service.drop_mirror(data.name, data.distribution or "stable", cleanup=False)
         raise
-    if data.type == "deb":
-        if not data.distribution:
-            raise HTTPException(status_code=400, detail="Для deb-зеркала нужен distribution")
-        ok, msg = await deb_service.create_mirror(
-            name=data.name,
-            url=data.source_url,
-            distribution=data.distribution,
-            components=data.components or "main",
-            architectures=data.architectures or "amd64",
-        )
-        if not ok:
-            raise HTTPException(status_code=500, detail=f"Ошибка aptly: {msg}")
-
-    db.add(mirror)
-    await db.flush()
-    await db.refresh(mirror)
-    return mirror
-
 
 
 @router.get("/export")
@@ -138,65 +145,73 @@ async def import_mirrors(file: UploadFile = File(...), db: AsyncSession = Depend
     raw = (await file.read()).decode("utf-8", errors="replace")
     created = []
     errors = []
-    for lineno, line in enumerate(raw.splitlines(), 1):
-        line = line.strip()
-        if not line or line.startswith("#"):
-            continue
-        parts = [p.strip() for p in line.split("|")]
-        if len(parts) < 3:
-            errors.append(f"строка {lineno}: нужно минимум имя|тип|url")
-            continue
-        name, typ, url = parts[0], parts[1].lower(), parts[2]
-        distribution = parts[3] if len(parts) > 3 else ""
-        components = parts[4] if len(parts) > 4 else "main"
-        architectures = parts[5] if len(parts) > 5 else ("amd64" if typ == "deb" else "x86_64")
-        schedule = parts[6] if len(parts) > 6 else ""
-        if typ not in ("rpm", "deb"):
-            errors.append(f"строка {lineno}: тип rpm или deb")
-            continue
-        if not name_error(name) is None:
-            errors.append(f"строка {lineno}: {name_error(name)}")
-            continue
-        field_err = mirror_field_error({
-            "source_url": url,
-            "schedule": schedule,
-            "distribution": distribution,
-            "components": components,
-            "architectures": architectures,
-        })
-        if field_err:
-            errors.append(f"строка {lineno}: {field_err}")
-            continue
-        exists = await db.execute(select(Mirror).where(Mirror.name == name))
-        if exists.scalar_one_or_none():
-            errors.append(f"строка {lineno}: {name} уже есть")
-            continue
-        local_path = settings.MIRRORS_DIR / typ / name
-        try:
-            _check_inside(local_path, settings.MIRRORS_DIR)
-        except HTTPException as exc:
-            errors.append(f"строка {lineno}: {exc.detail}")
-            continue
-        local_path.mkdir(parents=True, exist_ok=True)
-        mirror = Mirror(
-            name=name,
-            type=typ,
-            source_url=url,
-            distribution=distribution,
-            components=components,
-            architectures=architectures,
-            schedule=schedule,
-            local_path=str(local_path),
-            enabled=True,
-        )
-        if typ == "deb":
-            ok, msg = await deb_service.create_mirror(name, url, distribution or "stable", components, architectures)
-            if not ok:
-                errors.append(f"строка {lineno}: aptly: {msg[:200]}")
+    created_aptly = []
+    try:
+        for lineno, line in enumerate(raw.splitlines(), 1):
+            line = line.strip()
+            if not line or line.startswith("#"):
                 continue
-        db.add(mirror)
-        created.append(name)
-    await db.commit()
+            parts = [p.strip() for p in line.split("|")]
+            if len(parts) < 3:
+                errors.append(f"строка {lineno}: нужно минимум имя|тип|url")
+                continue
+            name, typ, url = parts[0], parts[1].lower(), parts[2]
+            distribution = parts[3] if len(parts) > 3 else ""
+            components = parts[4] if len(parts) > 4 else "main"
+            architectures = parts[5] if len(parts) > 5 else ("amd64" if typ == "deb" else "x86_64")
+            schedule = parts[6] if len(parts) > 6 else ""
+            if typ not in ("rpm", "deb"):
+                errors.append(f"строка {lineno}: тип rpm или deb")
+                continue
+            if name_error(name) is not None:
+                errors.append(f"строка {lineno}: {name_error(name)}")
+                continue
+            field_err = mirror_field_error({
+                "source_url": url,
+                "schedule": schedule,
+                "distribution": distribution,
+                "components": components,
+                "architectures": architectures,
+            })
+            if field_err:
+                errors.append(f"строка {lineno}: {field_err}")
+                continue
+            exists = await db.execute(select(Mirror).where(Mirror.name == name))
+            if exists.scalar_one_or_none():
+                errors.append(f"строка {lineno}: {name} уже есть")
+                continue
+            local_path = settings.MIRRORS_DIR / typ / name
+            try:
+                _check_inside(local_path, settings.MIRRORS_DIR)
+            except HTTPException as exc:
+                errors.append(f"строка {lineno}: {exc.detail}")
+                continue
+            local_path.mkdir(parents=True, exist_ok=True)
+            mirror = Mirror(
+                name=name,
+                type=typ,
+                source_url=url,
+                distribution=distribution,
+                components=components,
+                architectures=architectures,
+                schedule=schedule,
+                local_path=str(local_path),
+                enabled=True,
+            )
+            if typ == "deb":
+                ok, msg = await deb_service.create_mirror(name, url, distribution or "stable", components, architectures)
+                if not ok:
+                    errors.append(f"строка {lineno}: aptly: {msg[:200]}")
+                    continue
+                created_aptly.append((name, distribution or "stable"))
+            db.add(mirror)
+            created.append(name)
+        await db.commit()
+    except Exception:
+        await db.rollback()
+        for aptly_name, dist in created_aptly:
+            await deb_service.drop_mirror(aptly_name, dist, cleanup=False)
+        raise
     return {"created": created, "errors": errors}
 
 
@@ -501,7 +516,7 @@ async def mirror_contents(
             line = line.strip()
             if " " in line or "_" not in line:
                 continue
-            if line.endswith("_amd64") or line.endswith("_all") or line.endswith("_noarch"):
+            if _package_arch_ok(line, mirror.architectures):
                 names.append(line)
         if q:
             names = [n for n in names if q.lower() in n.lower()]
@@ -528,18 +543,17 @@ async def mirror_contents(
             "packages": [],
         }
 
-    suffix = ".rpm"
-    matched = []
-    size = 0
-    for path in root.rglob(f"*{suffix}"):
-        if not path.is_file():
-            continue
-        size += path.stat().st_size
-        if q and q.lower() not in path.name.lower():
-            continue
-        matched.append(path)
-
-    matched.sort(key=lambda p: p.name.lower())
+    key = str(root)
+    now = time.time()
+    cached = _rpm_list_cache.get(key)
+    if not cached or now - cached[0] >= 60:
+        rows, size = await asyncio.get_running_loop().run_in_executor(None, _scan_rpms, root)
+        _rpm_list_cache[key] = (now, rows, size)
+    else:
+        _, rows, size = cached
+    matched = rows
+    if q:
+        matched = [item for item in rows if q.lower() in item["name"].lower()]
     page = matched[offset:offset + limit]
     return {
         "mirror_id": mirror_id,
@@ -548,14 +562,7 @@ async def mirror_contents(
         "offset": offset,
         "limit": limit,
         "size_bytes": size,
-        "packages": [
-            {
-                "name": p.name,
-                "size_bytes": p.stat().st_size,
-                "relpath": str(p.relative_to(root)),
-            }
-            for p in page
-        ],
+        "packages": page,
     }
 
 

@@ -45,6 +45,8 @@ def note(line: str):
     low = text.lower()
     if done:
         item["files"] = int(done.group(1))
+    elif ".rpm" in low and ("[skipped]" in low or "[downloaded]" in low):
+        item["files"] = int(item.get("files") or 0) + 1
     elif "downloading" in low and ".deb" in low:
         item["files"] = int(item.get("files") or 0) + 1
     _guard_disk(mirror_id)

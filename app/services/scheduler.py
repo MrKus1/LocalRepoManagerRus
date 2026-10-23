@@ -100,7 +100,8 @@ async def _tick():
                 key = ("cache-cleanup", now.isoformat())
                 if key not in _fired:
                     _fired.add(key)
-                    logger.info("Очистка кэша: %s", cleanup_cache(int(days)))
+                    removed = await asyncio.get_running_loop().run_in_executor(None, cleanup_cache, int(days))
+                    logger.info("Очистка кэша: %s", removed)
         except Exception:
             logger.warning("Плохой cron очистки кэша: %s", expr)
 

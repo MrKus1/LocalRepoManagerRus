@@ -16,6 +16,40 @@ from app.guards import metadata_error
 logger = logging.getLogger(__name__)
 
 
+def proc_cmdlines() -> list[str]:
+    lines = []
+    root = Path("/proc")
+    if not root.is_dir():
+        return lines
+    for entry in root.iterdir():
+        if not entry.name.isdigit():
+            continue
+        try:
+            raw = (entry / "cmdline").read_bytes()
+        except OSError:
+            continue
+        if raw:
+            lines.append(raw.replace(b"\0", b" ").decode(errors="replace"))
+    return lines
+
+
+def createrepo_busy(repo: Path, cmdlines: list[str] | None = None) -> bool:
+    target = str(repo)
+    lines = proc_cmdlines() if cmdlines is None else cmdlines
+    return any("createrepo" in line and target in line for line in lines)
+
+
+def drop_stale_repodata(repo: Path, cmdlines: list[str] | None = None) -> str | None:
+    """Убирает брошенный каталог createrepo. Живой процесс не трогает."""
+    stale = repo / ".repodata"
+    if not stale.is_dir():
+        return None
+    if createrepo_busy(repo, cmdlines):
+        return "Temporary repodata already exists: createrepo ещё работает"
+    shutil.rmtree(stale)
+    return None
+
+
 async def run_cmd(cmd: list[str], cwd: Optional[str] = None) -> Tuple[int, str, str]:
     from app.services.procs import track, untrack, note
     from app.services.proxy import proxy_env
@@ -162,6 +196,9 @@ class RpmService:
     async def update_metadata(self, repo_path: str) -> Tuple[bool, str]:
         path = Path(repo_path)
         path.mkdir(parents=True, exist_ok=True)
+        stale = drop_stale_repodata(path)
+        if stale:
+            return False, stale
         keep = (path / "repodata" / "repomd.xml").is_file()
         cmd = [self.createrepo, "--update", str(path)]
         if keep:

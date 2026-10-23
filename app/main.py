@@ -13,7 +13,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select, update, text
 
 from app.config import settings
-from app.services.proxy import load_proxy, save_proxy, load_min_free_gb, save_min_free_gb, load_max_sync, save_max_sync, load_retry, save_retry
+from app.services.proxy import load_proxy, save_proxy, redact_proxy_url, load_min_free_gb, save_min_free_gb, load_max_sync, save_max_sync, load_retry, save_retry
 from app.database import init_db, get_db, AsyncSessionLocal, engine
 from app.models import Mirror, LocalRepo, SyncLog, SyncStatus, CacheRepo
 from app.services.scheduler import start_scheduler, stop_scheduler
@@ -152,12 +152,16 @@ async def mirror_page(mirror_id: int, request: Request, db: AsyncSession = Depen
 
 @app.get("/api/proxy")
 async def get_proxy():
-    return load_proxy()
+    data = load_proxy()
+    data["proxy_url"] = redact_proxy_url(data.get("proxy_url") or "")
+    return data
 
 
 @app.put("/api/proxy")
 async def put_proxy(payload: dict):
-    return save_proxy(payload.get("proxy_url", ""), payload.get("no_proxy", ""))
+    saved = save_proxy(payload.get("proxy_url", ""), payload.get("no_proxy", ""))
+    saved["proxy_url"] = redact_proxy_url(saved.get("proxy_url") or "")
+    return saved
 
 
 @app.get("/api/min-free")
@@ -210,7 +214,15 @@ async def health():
         aptly = line or "ошибка" if proc.returncode == 0 else "ошибка"
     except Exception:
         aptly = "нет"
+    nginx = "нет"
+    try:
+        _reader, writer = await asyncio.wait_for(asyncio.open_connection("127.0.0.1", 80), timeout=2)
+        writer.close()
+        await writer.wait_closed()
+        nginx = "ok"
+    except Exception:
+        nginx = "нет"
     return JSONResponse(
-        {"status": "ok" if db_ok else "db", "disk_free_bytes": usage.free, "aptly": aptly},
+        {"status": "ok" if db_ok else "db", "disk_free_bytes": usage.free, "aptly": aptly, "nginx": nginx},
         status_code=200 if db_ok else 503,
     )

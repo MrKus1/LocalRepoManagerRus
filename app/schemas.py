@@ -12,7 +12,7 @@ class MirrorBase(BaseModel):
     source_url: str
     distribution: Optional[str] = None
     components: Optional[str] = None
-    architectures: Optional[str] = "amd64"
+    architectures: Optional[str] = None
     repoid: Optional[str] = None
     schedule: Optional[str] = None
     enabled: bool = True
@@ -54,7 +54,7 @@ class LocalRepoBase(BaseModel):
     description: Optional[str] = None
     distribution: Optional[str] = None
     component: Optional[str] = "main"
-    architectures: Optional[str] = "amd64"
+    architectures: Optional[str] = None
     gpg_key_id: Optional[str] = None
 
 

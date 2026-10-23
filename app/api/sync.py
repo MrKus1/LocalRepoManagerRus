@@ -26,8 +26,30 @@ _walks = set()
 _queue: list[int] = []
 _starting: set[int] = set()
 _active: set[int] = set()
+_deb_holder: int | None = None
 _queue_lock = asyncio.Lock()
 _finish_lock = asyncio.Lock()
+
+
+def plan_starts(ids: list[int], occupied: int, limit: int, deb_holder, types: dict[int, str]):
+    """RPM идут параллельно. Второй DEB не стартует, пока первый держит aptly."""
+    start = []
+    deferred = []
+    rest = []
+    count = occupied
+    holder = deb_holder
+    for mirror_id in ids:
+        if count >= limit:
+            rest.append(mirror_id)
+            continue
+        if types.get(mirror_id) == "deb" and holder:
+            deferred.append(mirror_id)
+            continue
+        start.append(mirror_id)
+        count += 1
+        if types.get(mirror_id) == "deb":
+            holder = mirror_id
+    return start, deferred + rest
 
 
 def _du_bytes(root: Path) -> int:
@@ -58,6 +80,18 @@ def _start_walk(key: str, func, *args):
 
 def _remember_du(key: str, root: Path):
     _count_cache[key] = (datetime.utcnow().timestamp(), 0, _du_bytes(root))
+
+
+def _remember_names(key: str, root: Path, suffix: str):
+    files = 0
+    if root.exists():
+        for dirpath, _, filenames in os.walk(root):
+            for name in filenames:
+                if name.endswith(suffix):
+                    files += 1
+    prev = _count_cache.get(key)
+    size = prev[2] if prev else 0
+    _count_cache[key] = (datetime.utcnow().timestamp(), files, size)
 
 
 def _count_packages(root: Path, suffix: str):
@@ -114,11 +148,15 @@ async def _do_sync(mirror_id: int):
 
 
 async def _run_sync(mirror_id: int):
+    global _deb_holder
     _active.add(mirror_id)
     try:
         await _run_sync_body(mirror_id)
     finally:
         _active.discard(mirror_id)
+        if _deb_holder == mirror_id:
+            _deb_holder = None
+        asyncio.create_task(_pump())
 
 
 async def _run_sync_body(mirror_id: int):
@@ -230,7 +268,6 @@ async def _run_sync_body(mirror_id: int):
             )
             await db.commit()
     flog.info("sync %s\n%s", "прошла" if success else "не прошла", message or "")
-    asyncio.create_task(_pump())
     if success:
         root = Path(local_path)
         if mirror_type == "deb":
@@ -277,6 +314,7 @@ async def _occupied(db: AsyncSession) -> int:
 
 async def request_sync(mirror_id: int, force: bool = False) -> dict:
     """Старт сразу или постановка в очередь. Слот занимается до записи running в базу."""
+    global _deb_holder
     async with _queue_lock:
         async with AsyncSessionLocal() as db:
             mirror = await db.get(Mirror, mirror_id)
@@ -290,18 +328,28 @@ async def request_sync(mirror_id: int, force: bool = False) -> dict:
             process = get_process(mirror_id)
             if process is not None and process.returncode is None:
                 return {"ok": False, "detail": "Синхронизация уже выполняется", "status": 409}
+            deb_busy = mirror.type == "deb" and _deb_holder is not None
             if not force:
                 count = await _occupied(db)
                 limit = load_max_sync()
-                if count >= limit or _queue:
+                if count >= limit or _queue or deb_busy:
                     if mirror_id not in _queue:
                         _queue.append(mirror_id)
                     mirror.status = "queued"
                     mirror.last_error = None
                     await db.commit()
                     return {"ok": True, "queued": True, "mirror_id": mirror_id, "position": _queue.index(mirror_id) + 1}
+            if deb_busy:
+                if mirror_id not in _queue:
+                    _queue.append(mirror_id)
+                mirror.status = "queued"
+                mirror.last_error = None
+                await db.commit()
+                return {"ok": True, "queued": True, "mirror_id": mirror_id, "position": _queue.index(mirror_id) + 1}
             if mirror_id in _queue:
                 _queue.remove(mirror_id)
+            if mirror.type == "deb":
+                _deb_holder = mirror_id
             _starting.add(mirror_id)
             asyncio.create_task(_do_sync(mirror_id))
             return {"ok": True, "queued": False, "mirror_id": mirror_id}
@@ -309,12 +357,14 @@ async def request_sync(mirror_id: int, force: bool = False) -> dict:
 
 async def _pump():
     """Запускает следующие из очереди, пока есть свободный слот."""
+    global _deb_holder
     async with _queue_lock:
         async with AsyncSessionLocal() as db:
             count = await _occupied(db)
             limit = load_max_sync()
-            while _queue and count < limit:
-                mirror_id = _queue.pop(0)
+            eligible = []
+            types = {}
+            for mirror_id in list(_queue):
                 if mirror_id in _starting or mirror_id in _active:
                     continue
                 mirror = await db.get(Mirror, mirror_id)
@@ -322,9 +372,15 @@ async def _pump():
                     if mirror and mirror.status == "queued":
                         mirror.status = SyncStatus.IDLE.value
                     continue
+                eligible.append(mirror_id)
+                types[mirror_id] = mirror.type
+            start, back = plan_starts(eligible, count, limit, _deb_holder, types)
+            for mirror_id in start:
+                if types.get(mirror_id) == "deb":
+                    _deb_holder = mirror_id
                 _starting.add(mirror_id)
                 asyncio.create_task(_do_sync(mirror_id))
-                count += 1
+            _queue[:] = back
             await db.commit()
 
 
@@ -451,14 +507,23 @@ def _progress_body(mirror, item: dict):
             else:
                 root = Path(mirror.local_path)
                 suffix = ".rpm"
-            cached = _count_cache.get(str(root))
-            stale = not cached or datetime.utcnow().timestamp() - cached[0] >= 60
-            if stale:
-                _start_walk(str(root), _count_packages, root, suffix)
-            if cached:
-                files, size = cached[1], cached[2]
-            elif mirror.size_bytes:
-                size = mirror.size_bytes
+            if mirror.type != "deb" and mirror.status == SyncStatus.RUNNING.value:
+                key = "names:" + str(root)
+                cached = _count_cache.get(key)
+                stale = not cached or datetime.utcnow().timestamp() - cached[0] >= 60
+                if stale:
+                    _start_walk(key, _remember_names, key, root, suffix)
+                if cached and cached[1]:
+                    files = cached[1]
+            else:
+                cached = _count_cache.get(str(root))
+                stale = not cached or datetime.utcnow().timestamp() - cached[0] >= 60
+                if stale:
+                    _start_walk(str(root), _count_packages, root, suffix)
+                if cached:
+                    files, size = cached[1], cached[2]
+                elif mirror.size_bytes:
+                    size = mirror.size_bytes
     position = None
     if mirror.status == "queued":
         try:

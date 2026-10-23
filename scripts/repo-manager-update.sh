@@ -81,6 +81,9 @@ PY
     chown -R root:root "$INSTALL_DIR"
     chown -R "$SERVICE_USER:$SERVICE_USER" "$INSTALL_DIR/venv" "$INSTALL_DIR/.env" 2>/dev/null || true
     install_helper
+    if [[ ! -f /var/lib/repo-manager/api-allow.conf && -f "$INSTALL_DIR/scripts/api-allow.conf" ]]; then
+        cp "$INSTALL_DIR/scripts/api-allow.conf" /var/lib/repo-manager/api-allow.conf
+    fi
     conf_src="$INSTALL_DIR/scripts/nginx-repo-manager.conf"
     conf_dst="/etc/nginx/conf.d/repo-manager.conf"
     if [[ -f "$conf_src" && -d /etc/nginx/conf.d ]]; then
