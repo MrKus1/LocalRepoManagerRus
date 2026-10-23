@@ -87,7 +87,7 @@
         <div class="modal-content">
             <div class="modal-header"><h5 class="modal-title">Обновление</h5><button type="button" class="btn-close" data-bs-dismiss="modal"></button></div>
             <div class="modal-body">
-                <p class="small text-muted">Сейчас <span id="updateCurrent">…</span>. Загрузите архив RM-x.y.z-offline.tar.gz новее текущей версии.</p>
+                <p class="small text-muted">Сейчас <span id="updateCurrent">{{ version }}</span>. Нужен архив <span class="text-body">RM-*-offline.tar.gz</span> с версией новее этой.</p>
                 <div class="mb-3">
                     <label class="form-label" for="updateFile">Файл обновления</label>
                     <input id="updateFile" class="form-control" type="file" accept=".tar.gz,.tgz">
@@ -104,12 +104,28 @@
     </div>
 </div>
 <div class="modal fade" id="tasksModal" tabindex="-1">
-    <div class="modal-dialog modal-dialog-centered">
+    <div class="modal-dialog modal-dialog-centered modal-lg">
         <div class="modal-content">
             <div class="modal-header"><h5 class="modal-title">Задачи</h5><button type="button" class="btn-close" data-bs-dismiss="modal"></button></div>
             <div class="modal-body">
+                <p class="small text-muted">Синхронизации и очистка aptly. Синхронизации остаются после перезапуска службы.</p>
+                <div id="jobCard" style="max-height: 360px; overflow: auto;">
+                    <table class="table table-sm mb-0">
+                        <thead><tr><th>Название</th><th>Время</th><th>Результат</th></tr></thead>
+                        <tbody id="jobRows"><tr><td colspan="3" class="text-muted">Задач ещё нет.</td></tr></tbody>
+                    </table>
+                </div>
+            </div>
+        </div>
+    </div>
+</div>
+<div class="modal fade" id="cacheModal" tabindex="-1">
+    <div class="modal-dialog modal-dialog-centered">
+        <div class="modal-content">
+            <div class="modal-header"><h5 class="modal-title">Очистка кэша</h5><button type="button" class="btn-close" data-bs-dismiss="modal"></button></div>
+            <div class="modal-body">
                 <div class="mb-3">
-                    <label class="form-label" for="cacheCron">Очистка кэша, cron</label>
+                    <label class="form-label" for="cacheCron">Cron</label>
                     <input id="cacheCron" class="form-control" placeholder="0 4 * * *" oninput="cronHint(this, 'cacheCronHint')">
                     <div class="form-text" id="cacheCronHint">пример: 0 4 * * * — каждый день в 04:00</div>
                 </div>

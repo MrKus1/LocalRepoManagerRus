@@ -180,6 +180,7 @@ function fmtGb(n) {
 function openSettings(id) {
     closeMenu();
     bootstrap.Modal.getOrCreateInstance(document.getElementById(id)).show();
+    if (id === 'tasksModal' && typeof pollJobs === 'function') pollJobs();
 }
 function toggleMenu() {
     document.getElementById('sideMenu').classList.toggle('open');
@@ -260,9 +261,12 @@ fetch('/api/disk').then(r => r.json()).then(d => {
     bar.style.width = Math.min(100, pct).toFixed(0) + '%';
     bar.className = pct < 70 ? 'disk-ok' : pct < 91 ? 'disk-warn' : 'disk-full';
 }).catch(() => {
-    document.getElementById('diskInfo').textContent = 'диск: нет данных';
+    document.getElementById('diskInfo').textContent = 'нет связи с сервисом';
 });
 
+function softStop(text) {
+    return /^(Прервано|Остановлено|Удаление прервано)/.test(text || '');
+}
 function humanCron(expr) {
     const p = (expr || '').trim().split(/\s+/);
     if (p.length < 5) return expr;
@@ -396,12 +400,46 @@ async function showCacheFiles(id, name) {
     document.getElementById('cacheFilesBody').innerHTML = rows || '<tr><td colspan="2">Пока пусто</td></tr>';
     bootstrap.Modal.getOrCreateInstance(document.getElementById('cacheFilesModal')).show();
 }
+async function cleanupOrphans() {
+    askOk('Удалить каталоги публикаций, которых нет в списке? Зеркала из интерфейса не трогает. Место в пуле освобождает отдельный пункт «Почистить пул».', async () => {
+        const res = await fetch('/api/mirrors/cleanup-orphans', {method: 'POST'});
+        const data = await res.json().catch(() => ({}));
+        if (!res.ok) { toast(data.detail || res.status, false); return; }
+        toast('Убираю каталоги…');
+        pollJobs();
+    });
+}
 async function cleanupAptly() {
-    askOk('Удалить пакеты aptly, на которые не ссылается ни одно зеркало? Зеркала не трогает.', async () => {
+    askOk('Удалить из пула aptly пакеты, на которые никто не ссылается? Зеркала и каталоги не трогает.', async () => {
         const res = await fetch('/api/mirrors/cleanup-aptly', {method: 'POST'});
         const data = await res.json().catch(() => ({}));
         if (!res.ok) { toast(data.detail || res.status, false); return; }
-        toast('Готово');
+        toast('Чищу пул…');
+        pollJobs();
+    });
+}
+let jobSeen = {};
+async function pollJobs() {
+    const res = await fetch('/api/jobs');
+    const body = document.getElementById('jobRows');
+    if (!res.ok) {
+        if (body) body.innerHTML = '<tr><td colspan="3" class="text-danger">Список задач не открылся.</td></tr>';
+        return;
+    }
+    const jobs = await res.json();
+    if (body) {
+        const cell = (value) => String(value || '').replace(/[&<>"]/g, (ch) => '&#' + ch.charCodeAt(0) + ';');
+        body.innerHTML = jobs.length ? jobs.map(j => {
+            const result = j.status === 'running' ? 'идёт' : (j.status === 'queued' ? 'в очереди' : (j.status === 'success' ? 'прошла' : 'не прошла'));
+            const extra = (j.status === 'running' || j.status === 'queued') && j.line ? (' · ' + j.line) : '';
+            return '<tr><td>' + cell(j.title) + cell(extra) + '</td><td class="text-nowrap">' + cell(j.started_at) + '</td><td>' + result + '</td></tr>';
+        }).join('') : '<tr><td colspan="3" class="text-muted">Задач ещё нет.</td></tr>';
+    }
+    jobs.forEach(j => {
+        if (jobSeen[j.id] === 'running' && j.status !== 'running' && String(j.title).indexOf('Удаление') === 0) {
+            location.reload();
+        }
+        jobSeen[j.id] = j.status;
     });
 }
 document.querySelectorAll('.reach-lamp').forEach(async el => {
@@ -454,11 +492,13 @@ async function pollProgress() {
         if (!res.ok) continue;
         const data = await res.json();
         node.dataset.status = data.status;
-        node.textContent = '● ' + statusRu(data.status);
-        node.className = 'status-' + data.status;
+        const statusText = softStop(data.last_error) ? 'остановлено' : ((data.status === 'queued' && data.position) ? ('в очереди, место ' + data.position) : statusRu(data.status));
+        const tone = softStop(data.last_error) ? 'idle' : data.status;
+        node.textContent = '● ' + statusText;
+        node.className = 'status-' + tone;
         const card = document.getElementById('card-' + id);
         if (card) {
-            card.className = 'card h-100 card-' + data.status;
+            card.className = 'card h-100 card-' + tone;
             card.parentElement.dataset.status = data.status;
         }
         const syncBtn = card && card.querySelector('.sync-btn');
@@ -466,7 +506,7 @@ async function pollProgress() {
         if (syncBtn) syncBtn.style.display = (data.status === 'running' || data.status === 'queued') ? 'none' : '';
         if (stopBtn) stopBtn.style.display = (data.status === 'running' || data.status === 'queued') ? '' : 'none';
         const delBtn = card && card.querySelector('.delete-item');
-        if (delBtn) delBtn.disabled = data.status === 'running' || data.status === 'queued';
+        if (delBtn) delBtn.disabled = false;
         const lamp = card && card.querySelector('.reach-lamp');
         if (lamp && (data.status === 'running' || data.status === 'queued')) {
             lamp.className = 'reach-lamp lamp-yellow';
@@ -479,13 +519,18 @@ async function pollProgress() {
             if (data.last_error) {
                 err.textContent = data.last_error;
                 err.classList.remove('d-none');
+                err.classList.toggle('alert-secondary', softStop(data.last_error));
+                err.classList.toggle('alert-danger', !softStop(data.last_error));
             } else {
                 err.textContent = '';
                 err.classList.add('d-none');
             }
         }
         const sizeEl = document.getElementById('size-' + id);
-        if (sizeEl) sizeEl.textContent = data.size_bytes ? ('· ' + fmtGb(data.size_bytes)) : '';
+        if (sizeEl) {
+            if (!data.size_bytes) sizeEl.textContent = '';
+            else sizeEl.textContent = (data.size_kind === 'pool' ? '· пул ' : '· ') + fmtGb(data.size_bytes);
+        }
         const synced = document.getElementById('synced-' + id);
         if (synced && data.last_sync) synced.textContent = '· ' + data.last_sync;
         node.dataset.live = (data.status === 'running' || data.status === 'queued') ? '1' : '';
@@ -512,6 +557,7 @@ async function pollProgress() {
     updateRunCount();
     if (typeof applyMirrorView === 'function') applyMirrorView();
     refreshRetries();
+    pollJobs();
 }
 setInterval(pollProgress, 5000);
 pollProgress();
@@ -612,13 +658,13 @@ async function stopMirror(id) {
     const status = document.getElementById('status-' + id);
     if (status) {
         status.dataset.status = 'failed';
-        status.textContent = '● ошибка';
-        status.className = 'status-failed';
+        status.textContent = '● остановлено';
+        status.className = 'status-idle';
         status.dataset.live = '';
     }
     const card = document.getElementById('card-' + id);
     if (card) {
-        card.className = 'card h-100 card-failed';
+        card.className = 'card h-100 card-idle';
         card.parentElement.dataset.status = 'failed';
         const syncBtn = card.querySelector('.sync-btn');
         const stopBtn = card.querySelector('.stop-btn');
@@ -640,6 +686,13 @@ async function deleteMirror(id, name) {
         if (res.status === 204) {
             toast(withFiles ? 'Зеркало и файлы удалены' : 'Запись удалена');
             location.reload();
+            return;
+        }
+        if (res.status === 202) {
+            toast('Удаление запущено');
+            pollJobs();
+            const status = document.getElementById('status-' + id);
+            if (status) { status.dataset.status = 'running'; status.dataset.live = '1'; }
             return;
         }
         const data = await res.json().catch(() => ({}));

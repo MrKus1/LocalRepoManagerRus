@@ -4,20 +4,38 @@ from pathlib import Path
 import shutil
 
 from fastapi import APIRouter, Depends, HTTPException, status, Query, UploadFile, File, Request
-from fastapi.responses import PlainTextResponse
+from fastapi.responses import PlainTextResponse, JSONResponse
 from sqlalchemy.ext.asyncio import AsyncSession
-from sqlalchemy import select, delete as sql_delete
+from sqlalchemy import select, delete as sql_delete, update
 
 from app.database import get_db
 from app.models import Mirror, SyncStatus, SyncLog, SyncLog
 from app.schemas import MirrorCreate, MirrorUpdate, MirrorOut
 from app.config import settings
+from app.guards import inside, mirror_field_error, name_error
 from app.services.deb import deb_service
 from app.services.rpm import rpm_service
 
 logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/api/mirrors", tags=["mirrors"])
+
+
+def _check_name(name: str) -> None:
+    err = name_error(name)
+    if err:
+        raise HTTPException(status_code=400, detail=err)
+
+
+def _check_inside(path: Path, root: Path) -> None:
+    if not inside(path, root):
+        raise HTTPException(status_code=400, detail="Небезопасный путь зеркала")
+
+
+def _check_fields(payload: dict) -> None:
+    err = mirror_field_error(payload)
+    if err:
+        raise HTTPException(status_code=400, detail=err)
 
 
 @router.get("/", response_model=List[MirrorOut])
@@ -28,13 +46,14 @@ async def list_mirrors(db: AsyncSession = Depends(get_db)):
 
 @router.post("/", response_model=MirrorOut, status_code=status.HTTP_201_CREATED)
 async def create_mirror(data: MirrorCreate, db: AsyncSession = Depends(get_db)):
-    # Проверка уникальности имени
+    _check_name(data.name)
+    _check_fields(data.model_dump())
     existing = await db.execute(select(Mirror).where(Mirror.name == data.name))
     if existing.scalar_one_or_none():
         raise HTTPException(status_code=400, detail="Зеркало с таким именем уже существует")
 
-    # Локальный путь
     local_path = settings.MIRRORS_DIR / data.type / data.name
+    _check_inside(local_path, settings.MIRRORS_DIR)
     local_path.mkdir(parents=True, exist_ok=True)
 
     mirror = Mirror(
@@ -52,7 +71,30 @@ async def create_mirror(data: MirrorCreate, db: AsyncSession = Depends(get_db)):
         status=SyncStatus.IDLE.value,
     )
 
-    # Для deb создаём зеркало в aptly
+    aptly_created = False
+    try:
+        if data.type == "deb":
+            if not data.distribution:
+                raise HTTPException(status_code=400, detail="Для deb-зеркала нужен distribution")
+            ok, msg = await deb_service.create_mirror(
+                name=data.name,
+                url=data.source_url,
+                distribution=data.distribution,
+                components=data.components or "main",
+                architectures=data.architectures or "amd64",
+            )
+            if not ok:
+                raise HTTPException(status_code=500, detail=f"Ошибка aptly: {msg}")
+            aptly_created = True
+
+        db.add(mirror)
+        await db.flush()
+        await db.refresh(mirror)
+        return mirror
+    except Exception:
+        if aptly_created:
+            await deb_service.drop_mirror(data.name, data.distribution or "stable", cleanup=False)
+        raise
     if data.type == "deb":
         if not data.distribution:
             raise HTTPException(status_code=400, detail="Для deb-зеркала нужен distribution")
@@ -112,11 +154,29 @@ async def import_mirrors(file: UploadFile = File(...), db: AsyncSession = Depend
         if typ not in ("rpm", "deb"):
             errors.append(f"строка {lineno}: тип rpm или deb")
             continue
+        if not name_error(name) is None:
+            errors.append(f"строка {lineno}: {name_error(name)}")
+            continue
+        field_err = mirror_field_error({
+            "source_url": url,
+            "schedule": schedule,
+            "distribution": distribution,
+            "components": components,
+            "architectures": architectures,
+        })
+        if field_err:
+            errors.append(f"строка {lineno}: {field_err}")
+            continue
         exists = await db.execute(select(Mirror).where(Mirror.name == name))
         if exists.scalar_one_or_none():
             errors.append(f"строка {lineno}: {name} уже есть")
             continue
         local_path = settings.MIRRORS_DIR / typ / name
+        try:
+            _check_inside(local_path, settings.MIRRORS_DIR)
+        except HTTPException as exc:
+            errors.append(f"строка {lineno}: {exc.detail}")
+            continue
         local_path.mkdir(parents=True, exist_ok=True)
         mirror = Mirror(
             name=name,
@@ -140,6 +200,126 @@ async def import_mirrors(file: UploadFile = File(...), db: AsyncSession = Depend
     return {"created": created, "errors": errors}
 
 
+@router.post("/bulk-delete")
+async def bulk_delete(payload: dict, db: AsyncSession = Depends(get_db)):
+    """Удаляет сразу несколько зеркал. Файлы DEB снимает одной фоновой задачей."""
+    from app.database import AsyncSessionLocal
+    from app.services.jobs import busy, enqueue
+    from app.services.procs import set_mirror, note, get_process
+    from app.api.sync import _queue, _queue_lock, _starting
+
+    raw_ids = payload.get("ids") or []
+    delete_files = bool(payload.get("delete_files"))
+    ids = []
+    for item in raw_ids:
+        try:
+            ids.append(int(item))
+        except (TypeError, ValueError):
+            continue
+    if not ids:
+        raise HTTPException(status_code=400, detail="Не выбраны зеркала")
+
+    errors = []
+    debs = []
+    now = []
+    for mirror_id in ids:
+        mirror = await db.get(Mirror, mirror_id)
+        if not mirror:
+            errors.append(f"{mirror_id}: нет в списке")
+            continue
+        process = get_process(mirror.id)
+        if mirror.id in _starting or (process is not None and process.returncode is None) or mirror.status in (SyncStatus.RUNNING.value, "queued"):
+            errors.append(f"{mirror.name}: идёт синхронизация")
+            continue
+        if delete_files and mirror.type == "deb":
+            debs.append(mirror)
+        else:
+            now.append(mirror)
+
+    if debs and busy():
+        raise HTTPException(status_code=409, detail="Уже выполняется другая задача")
+
+    async with _queue_lock:
+        for mirror in now + debs:
+            if mirror.id in _queue:
+                _queue.remove(mirror.id)
+
+    deleted = []
+    for mirror in now:
+        await db.execute(sql_delete(SyncLog).where(SyncLog.mirror_id == mirror.id))
+        if delete_files:
+            _safe_rmtree(Path(mirror.local_path), settings.MIRRORS_DIR)
+        deleted.append(mirror.name)
+        await db.delete(mirror)
+    await db.commit()
+
+    if not debs:
+        return {"deleted": deleted, "started": [], "errors": errors}
+
+    planned = []
+    for mirror in debs:
+        mirror.status = SyncStatus.RUNNING.value
+        mirror.last_error = None
+        db.add(SyncLog(mirror_id=mirror.id, status=SyncStatus.RUNNING.value, message="удаление"))
+        planned.append({
+            "id": mirror.id,
+            "name": mirror.name,
+            "distribution": mirror.distribution or "stable",
+            "local_path": mirror.local_path,
+        })
+    await db.commit()
+    db.expunge_all()
+
+    async def worker(job):
+        done = []
+        failed = []
+        for item in planned:
+            job["line"] = "удаляю " + item["name"]
+            set_mirror(item["id"])
+            note("удаление " + item["name"])
+            try:
+                ok, msg = await deb_service.drop_mirror(item["name"], item["distribution"], cleanup=False)
+                if not ok:
+                    raise RuntimeError((msg or "aptly не удалил зеркало")[:500])
+                _safe_rmtree(settings.STORAGE_ROOT / "public" / item["name"], settings.STORAGE_ROOT / "public")
+                _safe_rmtree(Path(item["local_path"]), settings.MIRRORS_DIR)
+                async with AsyncSessionLocal() as session:
+                    await session.execute(sql_delete(SyncLog).where(SyncLog.mirror_id == item["id"]))
+                    row = await session.get(Mirror, item["id"])
+                    if row:
+                        await session.delete(row)
+                    await session.commit()
+                done.append(item["name"])
+            except Exception as exc:
+                from datetime import datetime
+                failed.append(item["name"])
+                async with AsyncSessionLocal() as session:
+                    await session.execute(
+                        update(Mirror)
+                        .where(Mirror.id == item["id"])
+                        .values(status=SyncStatus.FAILED.value, last_error=str(exc)[:500])
+                    )
+                    await session.execute(
+                        update(SyncLog)
+                        .where(SyncLog.mirror_id == item["id"], SyncLog.status == SyncStatus.RUNNING.value)
+                        .values(status=SyncStatus.FAILED.value, finished_at=datetime.utcnow(), message="не прошла")
+                    )
+                    await session.commit()
+        job["line"] = ("Удалено: " + ", ".join(done)) if done else "ничего не удалено"
+        if failed:
+            job["status"] = "failed"
+            job["line"] = (job["line"] + ". Ошибка: " + ", ".join(failed))[:300]
+
+    title = "Удаление " + (planned[0]["name"] if len(planned) == 1 else f"{len(planned)} зеркал")
+    job = await enqueue(title, worker)
+    if not job:
+        for item in planned:
+            await db.execute(update(Mirror).where(Mirror.id == item["id"]).values(status=SyncStatus.IDLE.value))
+        await db.commit()
+        raise HTTPException(status_code=409, detail="Уже выполняется другая задача")
+    return {"deleted": deleted, "started": [item["name"] for item in planned], "errors": errors, "job": job}
+
+
 @router.get("/{mirror_id}", response_model=MirrorOut)
 async def get_mirror(mirror_id: int, db: AsyncSession = Depends(get_db)):
     mirror = await db.get(Mirror, mirror_id)
@@ -159,6 +339,7 @@ async def update_mirror(
         raise HTTPException(status_code=404, detail="Зеркало не найдено")
 
     payload = data.model_dump(exclude_unset=True)
+    _check_fields(payload)
     if mirror.type == "deb" and any(key in payload for key in ("source_url", "distribution", "components", "architectures")):
         if mirror.status in (SyncStatus.RUNNING.value, "queued"):
             raise HTTPException(status_code=409, detail="Нельзя менять настройки DEB во время синхронизации")
@@ -232,12 +413,59 @@ async def prune_old(mirror_id: int, db: AsyncSession = Depends(get_db)):
     return {"removed": removed}
 
 
+@router.post("/cleanup-orphans")
+async def cleanup_orphans(db: AsyncSession = Depends(get_db)):
+    """Убирает каталоги и зеркала aptly, которых нет в базе. Пул не чистит."""
+    from app.models import LocalRepo
+    from app.services.jobs import busy, enqueue
+
+    if busy():
+        raise HTTPException(status_code=409, detail="Уже выполняется другая задача")
+    active = await db.execute(select(Mirror).where(Mirror.status.in_([SyncStatus.RUNNING.value, "queued"])))
+    if active.first():
+        raise HTTPException(status_code=409, detail="Дождитесь окончания синхронизации")
+    mirror_names = await db.execute(select(Mirror.name))
+    local_names = await db.execute(select(LocalRepo.name))
+    keep = {row[0] for row in mirror_names.all()} | {row[0] for row in local_names.all()}
+
+    async def worker(job):
+        job["line"] = "снимаю каталоги"
+        removed, errors = await deb_service.drop_orphans(keep)
+        if errors and not removed:
+            raise RuntimeError(errors)
+        job["line"] = ("Убрано: " + ", ".join(removed)) if removed else "Лишних каталогов нет"
+        if errors:
+            job["status"] = "failed"
+            job["line"] = (job["line"] + ". " + errors)[:300]
+
+    job = await enqueue("Каталоги без зеркал", worker)
+    if not job:
+        raise HTTPException(status_code=409, detail="Уже выполняется другая задача")
+    return job
+
+
 @router.post("/cleanup-aptly")
-async def cleanup_aptly():
-    ok, msg = await deb_service.cleanup()
-    if not ok:
-        raise HTTPException(status_code=500, detail=msg[:1000])
-    return {"message": "Очистка завершена", "output": msg[-1000:]}
+async def cleanup_aptly(db: AsyncSession = Depends(get_db)):
+    """Чистит пул aptly. Каталоги зеркал не удаляет."""
+    from app.services.jobs import busy, enqueue
+
+    if busy():
+        raise HTTPException(status_code=409, detail="Уже выполняется другая задача")
+    active = await db.execute(select(Mirror).where(Mirror.status.in_([SyncStatus.RUNNING.value, "queued"])))
+    if active.first():
+        raise HTTPException(status_code=409, detail="Дождитесь окончания синхронизации")
+
+    async def worker(job):
+        job["line"] = "чищу пул"
+        ok, msg = await deb_service.cleanup()
+        if not ok:
+            raise RuntimeError((msg or "очистка не удалась")[:300])
+        job["line"] = "Пул почищен"
+
+    job = await enqueue("Очистка пула", worker)
+    if not job:
+        raise HTTPException(status_code=409, detail="Уже выполняется другая задача")
+    return job
 
 
 @router.get("/{mirror_id}/contents")
@@ -254,7 +482,7 @@ async def mirror_contents(
 
     if mirror.type == "deb":
         code, out, err = await deb_service.run_check([
-            "aptly", "mirror", "show", "-with-packages", mirror.name
+            deb_service.aptly, "mirror", "show", "-with-packages", mirror.name
         ])
         if code != 0:
             busy = "database" in (err or out).lower() or "lock" in (err or out).lower() or "open database" in (err or out).lower()
@@ -331,6 +559,15 @@ async def mirror_contents(
     }
 
 
+def _safe_rmtree(path: Path, root: Path):
+    root_resolved = root.resolve()
+    target = path.resolve()
+    if target == root_resolved or root_resolved not in target.parents:
+        raise HTTPException(status_code=400, detail="Небезопасный путь удаления")
+    if target.exists() and target.is_dir():
+        shutil.rmtree(target)
+
+
 @router.delete("/{mirror_id}", status_code=status.HTTP_204_NO_CONTENT)
 async def delete_mirror(
     mirror_id: int,
@@ -341,25 +578,78 @@ async def delete_mirror(
     if not mirror:
         raise HTTPException(status_code=404, detail="Зеркало не найдено")
 
-    if mirror.status in (SyncStatus.RUNNING.value, "queued"):
-        raise HTTPException(status_code=409, detail="Нельзя удалить зеркало во время синхронизации")
+    from app.api.sync import _active, _queue, _queue_lock, _starting
+    from app.services.procs import get_process
+
+    process = get_process(mirror.id)
+    if mirror.id in _starting or mirror.id in _active or (process is not None and process.returncode is None):
+        raise HTTPException(status_code=409, detail="Нельзя удалить зеркало, пока идёт синхронизация")
+    async with _queue_lock:
+        if mirror.id in _queue:
+            _queue.remove(mirror.id)
 
     if delete_files and mirror.type == "deb":
-        try:
-            ok, msg = await deb_service.drop_mirror(mirror.name, mirror.distribution or "stable")
-            cok, cmsg = await deb_service.cleanup()
-            if not ok or not cok:
-                logger.warning("aptly cleanup %s: drop=%s cleanup=%s", mirror.name, msg, cmsg)
-        except Exception:
-            logger.exception("aptly cleanup failed for %s", mirror.name)
+        from app.database import AsyncSessionLocal
+        from app.services.jobs import busy, enqueue
+        from app.services.procs import set_mirror, note
+
+        if busy():
+            raise HTTPException(status_code=409, detail="Уже выполняется другая задача")
+        mirror.status = SyncStatus.RUNNING.value
+        mirror.last_error = None
+        db.add(SyncLog(mirror_id=mirror.id, status=SyncStatus.RUNNING.value, message="удаление"))
+        await db.commit()
+        db.expunge_all()
+        mirror_id = mirror.id
+        mirror_name = mirror.name
+        distribution = mirror.distribution or "stable"
+        local_path = mirror.local_path
+
+        async def worker(job):
+            job["line"] = "удаляю файлы"
+            set_mirror(mirror_id)
+            note("удаление файлов")
+            try:
+                ok, msg = await deb_service.drop_mirror(mirror_name, distribution, cleanup=False)
+                if not ok:
+                    raise RuntimeError((msg or "aptly не удалил зеркало")[:500])
+                _safe_rmtree(settings.STORAGE_ROOT / "public" / mirror_name, settings.STORAGE_ROOT / "public")
+                _safe_rmtree(Path(local_path), settings.MIRRORS_DIR)
+                async with AsyncSessionLocal() as session:
+                    await session.execute(sql_delete(SyncLog).where(SyncLog.mirror_id == mirror_id))
+                    row = await session.get(Mirror, mirror_id)
+                    if row:
+                        await session.delete(row)
+                    await session.commit()
+                job["line"] = "Файлы удалены"
+            except Exception as exc:
+                from datetime import datetime
+                async with AsyncSessionLocal() as session:
+                    await session.execute(
+                        update(Mirror)
+                        .where(Mirror.id == mirror_id)
+                        .values(status=SyncStatus.FAILED.value, last_error=str(exc)[:500])
+                    )
+                    await session.execute(
+                        update(SyncLog)
+                        .where(SyncLog.mirror_id == mirror_id, SyncLog.status == SyncStatus.RUNNING.value)
+                        .values(status=SyncStatus.FAILED.value, finished_at=datetime.utcnow(), message="не прошла")
+                    )
+                    await session.commit()
+                raise
+
+        job = await enqueue("Удаление " + mirror_name, worker)
+        if not job:
+            await db.execute(update(Mirror).where(Mirror.id == mirror_id).values(status=SyncStatus.IDLE.value))
+            await db.commit()
+            raise HTTPException(status_code=409, detail="Уже выполняется другая задача")
+        return JSONResponse(job, status_code=202)
 
     await db.execute(sql_delete(SyncLog).where(SyncLog.mirror_id == mirror.id))
     await db.flush()
 
     if delete_files:
-        path = Path(mirror.local_path)
-        if path.exists() and path.is_dir():
-            shutil.rmtree(path)
+        _safe_rmtree(Path(mirror.local_path), settings.MIRRORS_DIR)
 
     await db.delete(mirror)
     return None

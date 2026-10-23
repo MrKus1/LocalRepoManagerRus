@@ -8,6 +8,7 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.database import get_db
+from app.guards import tar_member_error
 from app.models import Mirror, SyncStatus
 
 router = APIRouter(prefix="/api/update", tags=["update"])
@@ -34,6 +35,12 @@ def parse_version(value: str) -> tuple:
 
 def archive_version(path: Path) -> str:
     with tarfile.open(path, "r:gz") as tar:
+        for member in tar.getmembers():
+            err = tar_member_error(member.name)
+            if err:
+                raise ValueError(err)
+            if member.issym() or member.islnk():
+                raise ValueError(f"ссылки в архиве запрещены: {member.name}")
         member = tar.getmember("repo-manager/VERSION")
         data = tar.extractfile(member)
         if data is None:

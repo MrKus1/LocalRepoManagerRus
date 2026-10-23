@@ -1,5 +1,6 @@
 import logging
 import shutil
+import asyncio
 from contextlib import asynccontextmanager
 from datetime import datetime
 from pathlib import Path
@@ -7,16 +8,16 @@ from pathlib import Path
 from fastapi import FastAPI, Request, Depends, HTTPException
 from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
-from fastapi.responses import HTMLResponse
+from fastapi.responses import HTMLResponse, JSONResponse
 from sqlalchemy.ext.asyncio import AsyncSession
-from sqlalchemy import select, update
+from sqlalchemy import select, update, text
 
 from app.config import settings
 from app.services.proxy import load_proxy, save_proxy, load_min_free_gb, save_min_free_gb, load_max_sync, save_max_sync, load_retry, save_retry
-from app.database import init_db, get_db, AsyncSessionLocal
+from app.database import init_db, get_db, AsyncSessionLocal, engine
 from app.models import Mirror, LocalRepo, SyncLog, SyncStatus, CacheRepo
 from app.services.scheduler import start_scheduler, stop_scheduler
-from app.api import mirrors, sync, packages, cache
+from app.api import mirrors, sync, packages, cache, jobs
 from app.api import update as update_api
 
 logging.basicConfig(level=logging.INFO)
@@ -41,16 +42,32 @@ async def lifespan(app: FastAPI):
     
     await init_db()
     async with AsyncSessionLocal() as db:
-        await db.execute(
-            update(Mirror)
-            .where(Mirror.status == SyncStatus.RUNNING.value)
-            .values(status=SyncStatus.FAILED.value, last_error="Прервано перезапуском сервиса")
-        )
-        await db.execute(
-            update(SyncLog)
-            .where(SyncLog.status == SyncStatus.RUNNING.value)
-            .values(status=SyncStatus.FAILED.value, finished_at=datetime.utcnow(), message="не прошла")
-        )
+        running_logs = await db.execute(select(SyncLog).where(SyncLog.status == SyncStatus.RUNNING.value))
+        delete_ids = set()
+        for log in running_logs.scalars().all():
+            if log.message == "удаление":
+                delete_ids.add(log.mirror_id)
+            else:
+                log.message = "не прошла"
+            log.status = SyncStatus.FAILED.value
+            log.finished_at = datetime.utcnow()
+        if delete_ids:
+            await db.execute(
+                update(Mirror)
+                .where(Mirror.status == SyncStatus.RUNNING.value, Mirror.id.in_(delete_ids))
+                .values(status=SyncStatus.FAILED.value, last_error="Удаление прервано перезапуском")
+            )
+            await db.execute(
+                update(Mirror)
+                .where(Mirror.status == SyncStatus.RUNNING.value, Mirror.id.notin_(delete_ids))
+                .values(status=SyncStatus.FAILED.value, last_error="Прервано перезапуском сервиса")
+            )
+        else:
+            await db.execute(
+                update(Mirror)
+                .where(Mirror.status == SyncStatus.RUNNING.value)
+                .values(status=SyncStatus.FAILED.value, last_error="Прервано перезапуском сервиса")
+            )
         await db.commit()
         logger.info("Сброшены зеркала, оставшиеся в running после перезапуска")
         from app.api.sync import restore_queue
@@ -76,6 +93,7 @@ app = FastAPI(
 )
 
 # API
+app.include_router(jobs.router)
 app.include_router(mirrors.router)
 app.include_router(sync.router)
 app.include_router(packages.router)
@@ -171,4 +189,28 @@ async def disk_usage():
 
 @app.get("/health")
 async def health():
-    return {"status": "ok"}
+    db_ok = True
+    try:
+        async with engine.connect() as conn:
+            await conn.execute(text("SELECT 1"))
+    except Exception:
+        logger.exception("health: postgres")
+        db_ok = False
+    usage = shutil.disk_usage(settings.STORAGE_ROOT)
+    aptly = "нет"
+    try:
+        proc = await asyncio.create_subprocess_exec(
+            settings.APTLY_BIN,
+            "version",
+            stdout=asyncio.subprocess.PIPE,
+            stderr=asyncio.subprocess.DEVNULL,
+        )
+        out, _ = await asyncio.wait_for(proc.communicate(), timeout=3)
+        line = (out.decode(errors="replace").strip().splitlines() or [""])[0][:80]
+        aptly = line or "ошибка" if proc.returncode == 0 else "ошибка"
+    except Exception:
+        aptly = "нет"
+    return JSONResponse(
+        {"status": "ok" if db_ok else "db", "disk_free_bytes": usage.free, "aptly": aptly},
+        status_code=200 if db_ok else 503,
+    )

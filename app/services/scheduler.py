@@ -39,7 +39,11 @@ def _save_retries(data: dict):
 
 
 async def _tick():
-    from app.api.sync import request_sync
+    from app.api.sync import request_sync, sweep_stale
+    try:
+        await sweep_stale()
+    except Exception:
+        logger.exception("sweep stale failed")
     now = datetime.now().replace(second=0, microsecond=0)
     retries = _retries()
     async with AsyncSessionLocal() as db:

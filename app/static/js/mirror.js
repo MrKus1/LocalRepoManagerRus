@@ -10,7 +10,7 @@
         if (syncBtn) syncBtn.style.display = (status === 'running' || status === 'queued') ? 'none' : '';
         if (stopBtn) stopBtn.style.display = (status === 'running' || status === 'queued') ? '' : 'none';
         const del = document.getElementById('deleteBtn');
-        if (del) del.disabled = status === 'running' || status === 'queued';
+        if (del) del.disabled = false;
         const statusEl = document.getElementById('mirrorStatus');
         if (statusEl) {
             statusEl.textContent = typeof statusRu === 'function' ? statusRu(status) : status;
@@ -33,6 +33,7 @@
     let lastStatus = root.dataset.status;
     setInterval(async () => {
         const res = await fetch('/api/sync/' + id + '/progress');
+        if (res.status === 404) { location.href = '/'; return; }
         if (!res.ok) return;
         const data = await res.json();
         const prev = lastStatus;
@@ -124,6 +125,12 @@
             if (res.status === 204) {
                 toast(withFiles ? 'Зеркало и файлы удалены' : 'Запись удалена');
                 location.href = '/';
+                return;
+            }
+            if (res.status === 202) {
+                toast('Удаление запущено');
+                if (typeof pollJobs === 'function') pollJobs();
+                setButtons('running');
                 return;
             }
             const data = await res.json().catch(() => ({}));

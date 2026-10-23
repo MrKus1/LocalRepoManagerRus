@@ -10,6 +10,7 @@ from app.database import get_db
 from app.models import LocalRepo, Package
 from app.schemas import LocalRepoCreate, LocalRepoOut, PackageOut
 from app.config import settings
+from app.guards import inside, name_error
 from app.services.deb import deb_service
 from app.services.rpm import rpm_service
 
@@ -26,11 +27,16 @@ async def list_local_repos(db: AsyncSession = Depends(get_db)):
 
 @router.post("/local-repos/", response_model=LocalRepoOut, status_code=201)
 async def create_local_repo(data: LocalRepoCreate, db: AsyncSession = Depends(get_db)):
+    err = name_error(data.name)
+    if err:
+        raise HTTPException(status_code=400, detail=err)
     existing = await db.execute(select(LocalRepo).where(LocalRepo.name == data.name))
     if existing.scalar_one_or_none():
         raise HTTPException(status_code=400, detail="Репозиторий с таким именем уже существует")
 
     local_path = settings.LOCAL_REPOS_DIR / data.type / data.name
+    if not inside(local_path, settings.LOCAL_REPOS_DIR):
+        raise HTTPException(status_code=400, detail="Небезопасный путь репозитория")
     local_path.mkdir(parents=True, exist_ok=True)
 
     repo = LocalRepo(

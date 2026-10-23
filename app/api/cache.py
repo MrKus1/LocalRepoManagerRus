@@ -8,6 +8,7 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.config import settings
+from app.guards import inside
 from app.database import get_db
 from app.models import CacheRepo
 import json
@@ -178,13 +179,14 @@ async def delete_cache(cache_id: int, db: AsyncSession = Depends(get_db)):
 
 @serve.get("/cache/{name}/{path:path}")
 async def fetch_cached(name: str, path: str, db: AsyncSession = Depends(get_db)):
-    if ".." in path or not _allowed(path):
+    dest = (_root(name) / path).resolve()
+    if ".." in path or not _allowed(path) or not inside(dest, _root(name)):
         raise HTTPException(status_code=404, detail="Файл не кэшируется")
     result = await db.execute(select(CacheRepo).where(CacheRepo.name == name))
     repo = result.scalar_one_or_none()
     if not repo:
         raise HTTPException(status_code=404, detail="Кэш не найден")
-    dest = _root(name) / path
+    dest = (_root(name) / path).resolve()
     if dest.is_file():
         return FileResponse(dest)
     lock = _locks.setdefault(f"{name}/{path}", asyncio.Lock())

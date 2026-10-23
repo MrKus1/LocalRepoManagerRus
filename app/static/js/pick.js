@@ -78,19 +78,26 @@ async function syncPicked() {
 }
 async function deletePicked() {
     const rows = pickedIds();
-    const ready = rows.filter(r => !r.busy);
-    const skipped = rows.length - ready.length;
-    if (!ready.length) { toast('Качающиеся и стоящие в очереди удалить нельзя', false); return; }
-    askDelete(ready.length + ' зеркал' + (skipped ? '. Занятые будут пропущены' : ''), async (withFiles) => {
-        let ok = 0;
-        let fail = 0;
-        for (const row of ready) {
-            const res = await fetch('/api/mirrors/' + row.id + '?delete_files=' + (withFiles ? 'true' : 'false'), {method: 'DELETE'});
-            if (res.status === 204) ok += 1;
-            else fail += 1;
+    if (!rows.length) { toast('Сначала отметьте зеркала', false); return; }
+    askDelete(rows.length + ' зеркал', async (withFiles) => {
+        const res = await fetch('/api/mirrors/bulk-delete', {
+            method: 'POST',
+            headers: {'Content-Type': 'application/json'},
+            body: JSON.stringify({ids: rows.map(row => Number(row.id)), delete_files: !!withFiles})
+        });
+        const data = await res.json().catch(() => ({}));
+        if (!res.ok) { toast(data.detail || res.status, false); return; }
+        const started = data.started || [];
+        const deleted = data.deleted || [];
+        const errors = data.errors || [];
+        if (started.length) {
+            toast('Удаление запущено: ' + started.length + (deleted.length ? ', уже убрано ' + deleted.length : ''));
+            if (typeof pollJobs === 'function') pollJobs();
+            if (errors.length) toast(errors[0], false);
+            return;
         }
-        toast('Удалено ' + ok + (fail ? ', ошибок ' + fail : '') + (skipped ? ', пропущено ' + skipped : ''));
-        if (ok) location.reload();
+        toast('Удалено ' + deleted.length + (errors.length ? '. ' + errors[0] : ''), errors.length === 0);
+        if (deleted.length) location.reload();
     });
 }
 document.getElementById('mirrorSearch')?.addEventListener('input', () => setTimeout(updatePickBar, 0));

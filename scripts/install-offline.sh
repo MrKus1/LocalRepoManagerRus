@@ -80,6 +80,7 @@ if [[ -f "$ROOT_DIR/bin/aptly" ]]; then
     echo "==> Установка aptly"
     cp "$ROOT_DIR/bin/aptly" /usr/local/bin/aptly
     chmod 755 /usr/local/bin/aptly
+    ln -sfn /usr/local/bin/aptly /usr/bin/aptly
     /usr/local/bin/aptly version || true
 else
     echo "ВНИМАНИЕ: bin/aptly не найден — deb-зеркала работать не будут"
@@ -128,15 +129,20 @@ $PYTHON -m venv "$INSTALL_DIR/venv"
 # --- .env ---
 if [[ ! -f "$INSTALL_DIR/.env" ]]; then
     echo "==> Создание .env"
-    cp "$INSTALL_DIR/.env.example" "$INSTALL_DIR/.env" 2>/dev/null || cat > "$INSTALL_DIR/.env" << 'ENVEOF'
+    PG_PASS=$(openssl rand -hex 18 2>/dev/null || python3 -c 'import secrets; print(secrets.token_hex(18))')
+    if [[ -z "${PG_PASS}" ]]; then
+        echo "Не удалось сгенерировать пароль PostgreSQL"
+        exit 1
+    fi
+    cat > "$INSTALL_DIR/.env" << ENVEOF
 POSTGRES_USER=repoman
-POSTGRES_PASSWORD=changeme
+POSTGRES_PASSWORD=${PG_PASS}
 POSTGRES_HOST=127.0.0.1
 POSTGRES_PORT=5432
 POSTGRES_DB=repo_manager
 DEBUG=false
 ENVEOF
-    echo "  Отредактируй $INSTALL_DIR/.env — укажи пароль PostgreSQL!"
+    echo "  Пароль PostgreSQL записан в $INSTALL_DIR/.env"
 fi
 
 # --- PostgreSQL (если ещё не настроен) ---

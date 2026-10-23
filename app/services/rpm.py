@@ -5,11 +5,13 @@
 
 import asyncio
 import logging
+import re
 import shutil
 from pathlib import Path
 from typing import Optional, Tuple
 
 from app.config import settings
+from app.guards import metadata_error
 
 logger = logging.getLogger(__name__)
 
@@ -65,11 +67,10 @@ class RpmService:
             "--disablerepo=*",
             "--nogpgcheck",
             "--setopt=fastestmirror=0",
-            "--setopt=retries=5",
-            "--setopt=timeout=60",
-            "--setopt=max_parallel_downloads=3",
+            "--setopt=retries=8",
+            "--setopt=timeout=180",
+            "--setopt=max_parallel_downloads=2",
             "reposync",
-            "--download-metadata",
             "-p", str(dest.parent),
         ]
         if newest_only:
@@ -96,25 +97,78 @@ class RpmService:
         code, out, err = await run_cmd(cmd)
         if code != 0:
             text = (err or out or "").strip()
-            short = next((line for line in reversed(text.splitlines()) if "RuntimeError:" in line or "Error:" in line or "Cannot download" in line), "")
+            short = metadata_error(text)
+            if not short:
+                short = next((line for line in reversed(text.splitlines()) if "RuntimeError:" in line or "Error:" in line or "Cannot download" in line), "")
             if not short:
                 short = text.splitlines()[-1] if text else "reposync завершился с ошибкой"
             logger.error("reposync failed: %s", short)
             return False, short[:500]
 
-        meta_path = dest if (dest / "repodata").exists() or any(dest.glob("*.rpm")) else dest
-        # reposync кладёт пакеты в dest.parent / repo_name
-        await self.update_metadata(str(dest))
-        return True, out
+        meta_note = await self.fetch_upstream_metadata(source, dest)
+        ok_meta, meta = await self.update_metadata(str(dest))
+        if not ok_meta:
+            return False, (meta or "createrepo_c не собрал repodata")[:500]
+        return True, ((out or "") + ("\n" + meta_note if meta_note else "")).strip()
+
+    async def fetch_upstream_metadata(self, source: str, dest: Path) -> str:
+        """Кладёт comps/modules/updateinfo рядом с пакетами. Битый sqlite не валит sync."""
+        if not source:
+            return ""
+        import tempfile
+        failed = []
+        saved = []
+        with tempfile.NamedTemporaryFile(prefix="repomd-", suffix=".xml") as tmp:
+            code, _out, err = await run_cmd([
+                "curl", "-fsSL", "--retry", "3", "--max-time", "60", "-o", tmp.name, source + "repodata/repomd.xml",
+            ])
+            if code != 0:
+                return "repomd.xml не скачан: " + (err or "")[:160]
+            text = Path(tmp.name).read_text(errors="replace")
+        hrefs = re.findall(r'href="(repodata/[^"]+)"', text)
+        meta_dir = dest / "repodata"
+        meta_dir.mkdir(parents=True, exist_ok=True)
+        for href in hrefs:
+            if "sqlite" in href:
+                continue
+            filename = href.rsplit("/", 1)[-1]
+            target = meta_dir / filename
+            code, _out, _err = await run_cmd([
+                "curl", "-fL", "--retry", "3", "--retry-delay", "2", "--max-time", "180",
+                "-o", str(target), source + href,
+            ])
+            if code != 0:
+                target.unlink(missing_ok=True)
+                failed.append(filename.split("-", 1)[-1])
+            else:
+                saved.append(filename)
+        if not any("primary" in name for name in saved):
+            return "primary.xml.gz не скачан" + (": " + ", ".join(failed[:4]) if failed else "")
+        saved_set = set(saved)
+
+        def keep_block(match):
+            block = match.group(0)
+            names = re.findall(r'href="repodata/([^"]+)"', block)
+            if names and all(name in saved_set for name in names):
+                return block
+            return ""
+
+        filtered = re.sub(r'<data type="[^"]+">.*?</data>', keep_block, text, flags=re.S)
+        (meta_dir / "repomd.xml").write_text(filtered)
+        if failed:
+            return "пропущены метаданные: " + ", ".join(failed[:6])
+        return ""
 
     async def update_metadata(self, repo_path: str) -> Tuple[bool, str]:
         path = Path(repo_path)
         path.mkdir(parents=True, exist_ok=True)
-        if (path / "repodata").exists():
-            cmd = [self.createrepo, "--update", str(path)]
-        else:
-            cmd = [self.createrepo, str(path)]
+        keep = (path / "repodata" / "repomd.xml").is_file()
+        cmd = [self.createrepo, "--update", str(path)]
+        if keep:
+            cmd.insert(1, "--keep-all-metadata")
         code, out, err = await run_cmd(cmd)
+        if code != 0 and keep and "keep-all-metadata" in (err or out or ""):
+            code, out, err = await run_cmd([self.createrepo, "--update", str(path)])
         if code != 0:
             return False, err or out
         return True, out

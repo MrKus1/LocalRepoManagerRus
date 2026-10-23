@@ -39,6 +39,22 @@ apply() {
         log "архив не найден: $ARCHIVE"
         exit 1
     fi
+    if ! python3 - "$ARCHIVE" << 'PY'
+import sys, tarfile
+from pathlib import PurePosixPath
+path = sys.argv[1]
+with tarfile.open(path, "r:gz") as tar:
+    for member in tar.getmembers():
+        name = member.name
+        parts = PurePosixPath(name).parts
+        if member.issym() or member.islnk() or (not name) or name.startswith("/") or ".." in parts or not parts or parts[0] != "repo-manager":
+            print(name)
+            sys.exit(1)
+PY
+    then
+        log "архив отклонён: внутри tar есть путь вне repo-manager"
+        exit 1
+    fi
     log "обновление из $ARCHIVE"
     systemctl stop repo-manager || true
     sleep 1
@@ -65,6 +81,24 @@ apply() {
     chown -R root:root "$INSTALL_DIR"
     chown -R "$SERVICE_USER:$SERVICE_USER" "$INSTALL_DIR/venv" "$INSTALL_DIR/.env" 2>/dev/null || true
     install_helper
+    conf_src="$INSTALL_DIR/scripts/nginx-repo-manager.conf"
+    conf_dst="/etc/nginx/conf.d/repo-manager.conf"
+    if [[ -f "$conf_src" && -d /etc/nginx/conf.d ]]; then
+        cp -a "$conf_dst" "$conf_dst.bak" 2>/dev/null || true
+        cp "$conf_src" "$conf_dst"
+        if out=$(nginx -t 2>&1); then
+            if ! nginx -s reload >/dev/null 2>&1; then
+                systemctl reload nginx >/dev/null 2>&1 || log "nginx не перечитал конфиг. Выполните: systemctl restart nginx"
+            fi
+        else
+            if [[ -f "$conf_dst.bak" ]]; then
+                cp -a "$conf_dst.bak" "$conf_dst"
+            else
+                rm -f "$conf_dst"
+            fi
+            log "новый конфиг nginx не применён: $out"
+        fi
+    fi
     systemctl start repo-manager
     log "обновление завершено, версия $(cat "$INSTALL_DIR/VERSION" 2>/dev/null || echo '?')"
     rm -rf "$tmp"

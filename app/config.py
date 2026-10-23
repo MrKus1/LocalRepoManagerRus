@@ -35,9 +35,9 @@ class Settings(BaseSettings):
     CREATEREPO_BIN: str = "createrepo_c"
     
     # Web
-    HOST: str = "0.0.0.0"
+    HOST: str = "127.0.0.1"
     PORT: int = 8000
-    DEBUG: bool = True
+    DEBUG: bool = False
     
     # Прокси для синхронизации. Пусто = напрямую.
     PROXY_URL: str = ""
