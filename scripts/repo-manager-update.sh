@@ -70,6 +70,7 @@ PY
     fi
     rsync -a --delete \
         --exclude .env \
+        --exclude .git \
         --exclude venv \
         --exclude storage \
         --exclude __pycache__ \
@@ -80,9 +81,27 @@ PY
     fi
     chown -R root:root "$INSTALL_DIR"
     chown -R "$SERVICE_USER:$SERVICE_USER" "$INSTALL_DIR/venv" "$INSTALL_DIR/.env" 2>/dev/null || true
+    chmod 600 "$INSTALL_DIR/.env" 2>/dev/null || true
     install_helper
-    if [[ ! -f /var/lib/repo-manager/api-allow.conf && -f "$INSTALL_DIR/scripts/api-allow.conf" ]]; then
-        cp "$INSTALL_DIR/scripts/api-allow.conf" /var/lib/repo-manager/api-allow.conf
+    unit=/etc/systemd/system/repo-manager.service
+    if [[ -f "$unit" ]] && grep -q -- '--host 0.0.0.0 --port 8000' "$unit"; then
+        sed -i 's/--host 0.0.0.0 --port 8000/--host 127.0.0.1 --port 8000/' "$unit"
+        systemctl daemon-reload
+        log "служба слушает только 127.0.0.1:8000"
+    fi
+    allow=/var/lib/repo-manager/api-allow.conf
+    # Широкий шаблон 10/8 и точечный 192.168.3.9 заменяются на подсеть лаборатории.
+    # Файл с любым другим allow не трогаем.
+    if [[ -f "$allow" ]]; then
+        allows=$(grep -E '^[[:space:]]*allow[[:space:]]' "$allow" | sed -E 's/[[:space:]]+/ /g; s/;//' | awk '{print $2}' | sort)
+        wide=$'10.0.0.0/8\n127.0.0.1\n172.16.0.0/12\n192.168.0.0/16'
+        pinned=$'127.0.0.1\n192.168.3.9'
+        if [[ "$allows" == "$wide" || "$allows" == "$pinned" ]]; then
+            cp "$INSTALL_DIR/scripts/api-allow.conf" "$allow"
+            log "api-allow: 127.0.0.1 и 192.168.3.0/24. Другой адрес добавьте в $allow"
+        fi
+    elif [[ -f "$INSTALL_DIR/scripts/api-allow.conf" ]]; then
+        cp "$INSTALL_DIR/scripts/api-allow.conf" "$allow"
     fi
     conf_src="$INSTALL_DIR/scripts/nginx-repo-manager.conf"
     conf_dst="/etc/nginx/conf.d/repo-manager.conf"

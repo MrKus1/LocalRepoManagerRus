@@ -10,7 +10,7 @@
         if (syncBtn) syncBtn.style.display = (status === 'running' || status === 'queued') ? 'none' : '';
         if (stopBtn) stopBtn.style.display = (status === 'running' || status === 'queued') ? '' : 'none';
         const del = document.getElementById('deleteBtn');
-        if (del) del.disabled = false;
+        if (del) del.disabled = status === 'running' || status === 'queued';
         const statusEl = document.getElementById('mirrorStatus');
         if (statusEl) {
             statusEl.textContent = typeof statusRu === 'function' ? statusRu(status) : status;
@@ -18,17 +18,28 @@
         }
     }
 
-    fetch('/api/mirrors/' + id + '/client-check').then(r => r.json()).then(d => {
+    function paintLamp(d) {
         const lamp = document.getElementById('lamp');
         if (!lamp) return;
-        if (root.dataset.status === 'running') {
-            lamp.className = 'reach-lamp lamp-yellow';
-            lamp.title = 'синхронизируется';
-            return;
+        const inline = lamp.classList.contains('reach-lamp-inline') ? ' reach-lamp-inline' : '';
+        lamp.className = 'reach-lamp' + inline + ' ' + (d && d.ok ? 'lamp-green' : 'lamp-red');
+        lamp.title = d && d.ok ? 'nginx отдаёт' : 'nginx не отдаёт ' + ((d && d.http_code) || '');
+        lamp.setAttribute('aria-label', lamp.title);
+    }
+
+    fetch('/api/mirrors/' + id + '/client-check').then(r => r.json()).then(paintLamp).catch(() => paintLamp({ok: false}));
+
+    if (root.dataset.type === 'deb') {
+        const estimate = document.getElementById('repoEstimate');
+        if (estimate) {
+            estimate.textContent = 'считаю размер…';
+            fetch('/api/mirrors/' + id + '/estimate').then(r => r.json()).then(data => {
+                if (!data || data.error || !data.bytes) { estimate.textContent = ''; return; }
+                const count = typeof fmtCount === 'function' ? fmtCount(data.packages) : data.packages;
+                estimate.textContent = '≈ ' + count + ' пакетов, ' + fmtGb(data.bytes);
+            }).catch(() => { estimate.textContent = ''; });
         }
-        lamp.className = 'reach-lamp ' + (d.ok ? 'lamp-green' : 'lamp-red');
-        lamp.title = d.ok ? 'nginx отдаёт' : 'nginx не отдаёт ' + (d.http_code || '');
-    });
+    }
 
     let lastStatus = root.dataset.status;
     setInterval(async () => {
@@ -39,18 +50,15 @@
         const prev = lastStatus;
         lastStatus = data.status;
         setButtons(data.status);
-        const lamp = document.getElementById('lamp');
-        if (!lamp) return;
-        if (data.status === 'running' || data.status === 'queued') {
-            lamp.className = 'reach-lamp lamp-yellow';
-            lamp.title = data.status === 'queued' ? 'в очереди' : 'синхронизируется';
-            return;
+        const sizeEl = document.getElementById('repoSize');
+        if (sizeEl) {
+            if (data.pool_bytes) {
+                const own = data.size_bytes ? ('этот ' + fmtGb(data.size_bytes) + ' · ') : '';
+                sizeEl.textContent = own + 'пул ' + fmtGb(data.pool_bytes);
+            } else if (data.size_bytes) sizeEl.textContent = fmtGb(data.size_bytes);
         }
-        if (prev === 'running' || prev === 'queued' || lamp.className.indexOf('lamp-yellow') !== -1) {
-            const check = await fetch('/api/mirrors/' + id + '/client-check');
-            const d = await check.json().catch(() => ({ok: false}));
-            lamp.className = 'reach-lamp ' + (d.ok ? 'lamp-green' : 'lamp-red');
-            lamp.title = d.ok ? 'nginx отдаёт' : 'nginx не отдаёт ' + (d.http_code || '');
+        if (prev !== data.status && data.status !== 'running' && data.status !== 'queued') {
+            fetch('/api/mirrors/' + id + '/client-check').then(r => r.json()).then(paintLamp).catch(() => paintLamp({ok: false}));
         }
     }, 5000);
 
@@ -69,7 +77,9 @@
                 const p = n => String(n).padStart(2, '0');
                 return p(d.getDate()) + '.' + p(d.getMonth() + 1) + ' ' + p(d.getHours()) + ':' + p(d.getMinutes());
             })() : '';
-            return '<tr><td class="text-nowrap">' + when + '</td><td>' + (l.status === 'success' ? 'прошла' : l.status === 'running' ? 'идёт' : 'не прошла') + '</td></tr>';
+            const label = l.status === 'success' ? 'прошла' : l.status === 'running' ? 'идёт' : l.status === 'queued' ? 'в очереди' : 'не прошла';
+            const tone = l.status === 'success' ? 'hist-success' : (l.status === 'running' || l.status === 'queued') ? 'hist-' + l.status : 'hist-failed';
+            return '<tr><td class="text-nowrap">' + when + '</td><td class="' + tone + '">' + label + '</td></tr>';
         }).join('') || '<tr><td colspan="2">Запусков ещё нет.</td></tr>';
         if (body.innerHTML === next) return;
         const top = box ? box.scrollTop : 0;
@@ -108,6 +118,11 @@
         toast('Сохранено');
     });
 
+    window.copySnippet = function () {
+        const text = (document.getElementById('snippet') || {}).innerText || '';
+        if (!text) { toast('Нечего копировать', false); return; }
+        navigator.clipboard.writeText(text).then(() => toast('Строка скопирована')).catch(() => toast('Не удалось скопировать', false));
+    };
     window.mirrorSync = async function () {
         const res = await fetch('/api/sync/' + id, {method:'POST'});
         const data = await res.json().catch(() => ({}));

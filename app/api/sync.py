@@ -2,6 +2,7 @@ from datetime import datetime
 import asyncio
 import logging
 import os
+import shutil
 import signal
 from pathlib import Path
 from fastapi import APIRouter, Depends, HTTPException, BackgroundTasks
@@ -10,6 +11,7 @@ from sqlalchemy import select, update
 
 from app.database import get_db, AsyncSessionLocal
 from app.config import settings
+from app.guards import shown_package_count, bytes_still_needed, space_block_message
 from app.models import Mirror, SyncLog, SyncStatus
 from app.schemas import SyncRequest, SyncLogOut
 from app.services.deb import deb_service
@@ -29,6 +31,15 @@ _active: set[int] = set()
 _deb_holder: int | None = None
 _queue_lock = asyncio.Lock()
 _finish_lock = asyncio.Lock()
+
+
+def should_queue(count: int, limit: int, mirror_type: str, deb_held: bool, queued_deb: bool, force: bool) -> bool:
+    """Второй DEB всегда ждёт. RPM при свободном слоте стартует, даже если в очереди уже стоит DEB."""
+    if mirror_type == "deb" and (deb_held or queued_deb):
+        return True
+    if force:
+        return False
+    return count >= limit
 
 
 def plan_starts(ids: list[int], occupied: int, limit: int, deb_holder, types: dict[int, str]):
@@ -84,14 +95,43 @@ def _remember_du(key: str, root: Path):
 
 def _remember_names(key: str, root: Path, suffix: str):
     files = 0
+    size = 0
     if root.exists():
         for dirpath, _, filenames in os.walk(root):
             for name in filenames:
-                if name.endswith(suffix):
-                    files += 1
-    prev = _count_cache.get(key)
-    size = prev[2] if prev else 0
+                if not name.endswith(suffix):
+                    continue
+                files += 1
+                try:
+                    size += os.path.getsize(os.path.join(dirpath, name))
+                except OSError:
+                    pass
     _count_cache[key] = (datetime.utcnow().timestamp(), files, size)
+
+
+def _disk_snapshot(root: Path, suffix: str, ttl: int) -> tuple[int, int] | None:
+    """Возвращает уже посчитанные пакеты. Новый обход не блокирует ответ."""
+    key = f"{root}|{suffix}"
+    cached = _count_cache.get(key)
+    now = datetime.utcnow().timestamp()
+    if not cached or now - cached[0] >= ttl:
+        _start_walk(key, _remember_names, key, root, suffix)
+    if not cached:
+        return None
+    return int(cached[1]), int(cached[2])
+
+
+def _sync_is_live(mirror_id: int, message: str | None) -> bool:
+    if mirror_id in _active or mirror_id in _starting or mirror_id in _queue:
+        return True
+    process = get_process(mirror_id)
+    if process is not None and process.returncode is None:
+        return True
+    if (message or "") == "удаление":
+        from app.services.jobs import busy
+        if busy():
+            return True
+    return False
 
 
 def _count_packages(root: Path, suffix: str):
@@ -312,8 +352,35 @@ async def _occupied(db: AsyncSession) -> int:
     return len(ids | _starting)
 
 
+async def _deb_space_block(mirror_id: int) -> str:
+    """Для Debian сверяет индекс Packages со свободным местом. Ошибка сети sync не останавливает."""
+    async with AsyncSessionLocal() as db:
+        mirror = await db.get(Mirror, mirror_id)
+        if not mirror or mirror.type != "deb":
+            return ""
+        source = mirror.source_url
+        distribution = mirror.distribution
+        components = mirror.components
+        architectures = mirror.architectures
+        already = mirror.size_bytes or 0
+    try:
+        estimate = await deb_service.estimate(source, distribution, components, architectures)
+    except Exception:
+        logger.exception("estimate %s", mirror_id)
+        return ""
+    if estimate.get("error") or not estimate.get("bytes"):
+        return ""
+    need = bytes_still_needed(estimate.get("bytes"), already)
+    settings.STORAGE_ROOT.mkdir(parents=True, exist_ok=True)
+    free = shutil.disk_usage(settings.STORAGE_ROOT).free
+    return space_block_message(free, need) or ""
+
+
 async def request_sync(mirror_id: int, force: bool = False) -> dict:
     """Старт сразу или постановка в очередь. Слот занимается до записи running в базу."""
+    block = await _deb_space_block(mirror_id)
+    if block:
+        return {"ok": False, "detail": block, "status": 409}
     global _deb_holder
     async with _queue_lock:
         async with AsyncSessionLocal() as db:
@@ -328,24 +395,21 @@ async def request_sync(mirror_id: int, force: bool = False) -> dict:
             process = get_process(mirror_id)
             if process is not None and process.returncode is None:
                 return {"ok": False, "detail": "Синхронизация уже выполняется", "status": 409}
-            deb_busy = mirror.type == "deb" and _deb_holder is not None
-            if not force:
-                count = await _occupied(db)
-                limit = load_max_sync()
-                if count >= limit or _queue or deb_busy:
-                    if mirror_id not in _queue:
-                        _queue.append(mirror_id)
-                    mirror.status = "queued"
-                    mirror.last_error = None
-                    await db.commit()
-                    return {"ok": True, "queued": True, "mirror_id": mirror_id, "position": _queue.index(mirror_id) + 1}
-            if deb_busy:
+            deb_held = _deb_holder is not None
+            queued_deb = False
+            if mirror.type == "deb" and _queue:
+                rows = await db.execute(select(Mirror.type).where(Mirror.id.in_(_queue)))
+                queued_deb = any(row[0] == "deb" for row in rows.all())
+            count = await _occupied(db)
+            limit = load_max_sync()
+            if should_queue(count, limit, mirror.type, deb_held, queued_deb, force):
                 if mirror_id not in _queue:
                     _queue.append(mirror_id)
                 mirror.status = "queued"
                 mirror.last_error = None
                 await db.commit()
-                return {"ok": True, "queued": True, "mirror_id": mirror_id, "position": _queue.index(mirror_id) + 1}
+                await _pump_locked(db)
+                return {"ok": True, "queued": mirror_id in _queue, "mirror_id": mirror_id, "position": (_queue.index(mirror_id) + 1) if mirror_id in _queue else None}
             if mirror_id in _queue:
                 _queue.remove(mirror_id)
             if mirror.type == "deb":
@@ -355,55 +419,69 @@ async def request_sync(mirror_id: int, force: bool = False) -> dict:
             return {"ok": True, "queued": False, "mirror_id": mirror_id}
 
 
-async def _pump():
-    """Запускает следующие из очереди, пока есть свободный слот."""
+async def _pump_locked(db: AsyncSession):
+    """Запускает следующие из очереди. Вызывать только под _queue_lock."""
     global _deb_holder
+    count = await _occupied(db)
+    limit = load_max_sync()
+    eligible = []
+    types = {}
+    for mirror_id in list(_queue):
+        if mirror_id in _starting or mirror_id in _active:
+            continue
+        mirror = await db.get(Mirror, mirror_id)
+        if not mirror or not mirror.enabled or mirror.status == SyncStatus.RUNNING.value:
+            if mirror and mirror.status == "queued":
+                mirror.status = SyncStatus.IDLE.value
+            continue
+        eligible.append(mirror_id)
+        types[mirror_id] = mirror.type
+    start, back = plan_starts(eligible, count, limit, _deb_holder, types)
+    for mirror_id in start:
+        if types.get(mirror_id) == "deb":
+            _deb_holder = mirror_id
+        _starting.add(mirror_id)
+        asyncio.create_task(_do_sync(mirror_id))
+    _queue[:] = back
+    await db.commit()
+
+
+async def _pump():
     async with _queue_lock:
         async with AsyncSessionLocal() as db:
-            count = await _occupied(db)
-            limit = load_max_sync()
-            eligible = []
-            types = {}
-            for mirror_id in list(_queue):
-                if mirror_id in _starting or mirror_id in _active:
-                    continue
-                mirror = await db.get(Mirror, mirror_id)
-                if not mirror or not mirror.enabled or mirror.status == SyncStatus.RUNNING.value:
-                    if mirror and mirror.status == "queued":
-                        mirror.status = SyncStatus.IDLE.value
-                    continue
-                eligible.append(mirror_id)
-                types[mirror_id] = mirror.type
-            start, back = plan_starts(eligible, count, limit, _deb_holder, types)
-            for mirror_id in start:
-                if types.get(mirror_id) == "deb":
-                    _deb_holder = mirror_id
-                _starting.add(mirror_id)
-                asyncio.create_task(_do_sync(mirror_id))
-            _queue[:] = back
-            await db.commit()
+            await _pump_locked(db)
 
 
 async def sweep_stale():
-    """Сбрасывает running, если задача уже умерла, а статус остался."""
+    """Сбрасывает running, если задача уже умерла, и закрывает старые «идёт» в истории."""
     async with _finish_lock:
         async with AsyncSessionLocal() as db:
-            result = await db.execute(select(Mirror).where(Mirror.status == SyncStatus.RUNNING.value))
+            now = datetime.utcnow()
             changed = False
+            result = await db.execute(select(Mirror).where(Mirror.status == SyncStatus.RUNNING.value))
             for mirror in result.scalars().all():
-                if mirror.id in _active or mirror.id in _starting:
-                    continue
-                process = get_process(mirror.id)
-                if process is not None and process.returncode is None:
+                logs = await db.execute(
+                    select(SyncLog).where(SyncLog.mirror_id == mirror.id, SyncLog.status == SyncStatus.RUNNING.value)
+                )
+                open_logs = logs.scalars().all()
+                if any(_sync_is_live(mirror.id, log.message) for log in open_logs) or _sync_is_live(mirror.id, None):
                     continue
                 mirror.status = SyncStatus.FAILED.value
                 mirror.last_error = "Процесс уже не идёт, статус сброшен"
-                await db.execute(
-                    update(SyncLog)
-                    .where(SyncLog.mirror_id == mirror.id, SyncLog.status == SyncStatus.RUNNING.value)
-                    .values(status=SyncStatus.FAILED.value, finished_at=datetime.utcnow(), message="не прошла")
-                )
                 changed = True
+            hanging = await db.execute(select(SyncLog).where(SyncLog.status == SyncStatus.RUNNING.value))
+            by_mirror: dict[int, list] = {}
+            for log in hanging.scalars().all():
+                by_mirror.setdefault(log.mirror_id, []).append(log)
+            for mirror_id, logs in by_mirror.items():
+                logs.sort(key=lambda item: item.id or 0)
+                newest = logs[-1]
+                live = _sync_is_live(mirror_id, newest.message)
+                for log in (logs[:-1] if live else logs):
+                    log.status = SyncStatus.FAILED.value
+                    log.finished_at = now
+                    log.message = "не прошла"
+                    changed = True
             if changed:
                 await db.commit()
 
@@ -478,6 +556,7 @@ async def sync_progress(mirror_id: int, db: AsyncSession = Depends(get_db)):
             "line": "",
             "files": 0,
             "size_bytes": mirror.size_bytes or 0,
+            "pool_bytes": None,
             "size_kind": "mirror",
             "position": None,
             "last_error": mirror.last_error or "",
@@ -486,44 +565,34 @@ async def sync_progress(mirror_id: int, db: AsyncSession = Depends(get_db)):
 
 
 def _progress_body(mirror, item: dict):
+    noted = int(item.get("files") or 0)
+    running = mirror.status == SyncStatus.RUNNING.value
+    ttl = 10 if running else 60
     size_kind = "mirror"
-    if mirror.type == "deb" and mirror.status == SyncStatus.RUNNING.value:
-        files = int(item.get("files") or 0)
+    pool_bytes = None
+    if mirror.type == "deb":
+        root = settings.STORAGE_ROOT / "public" / mirror.name
+        suffix = ".deb"
+    else:
+        root = Path(mirror.local_path)
+        suffix = ".rpm"
+    disk = None
+    size = int(item.get("size_bytes") or mirror.size_bytes or 0)
+    if mirror.status != "queued":
+        snap = _disk_snapshot(root, suffix, ttl)
+        if snap:
+            disk, counted = snap
+            if counted:
+                size = counted
+    if mirror.type == "deb" and running:
         pool = settings.STORAGE_ROOT / "aptly" / "pool"
         key = "aptly-pool"
         cached = _count_cache.get(key)
-        stale = not cached or datetime.utcnow().timestamp() - cached[0] >= 60
-        if stale:
+        if not cached or datetime.utcnow().timestamp() - cached[0] >= 15:
             _start_walk(key, _remember_du, key, pool)
-        size = cached[2] if cached else (item.get("size_bytes") or mirror.size_bytes or 0)
-        size_kind = "pool"
-    else:
-        files = int(item.get("files") or 0)
-        size = item.get("size_bytes") or mirror.size_bytes or 0
-        if mirror.status != "queued":
-            if mirror.type == "deb":
-                root = settings.STORAGE_ROOT / "public" / mirror.name
-                suffix = ".deb"
-            else:
-                root = Path(mirror.local_path)
-                suffix = ".rpm"
-            if mirror.type != "deb" and mirror.status == SyncStatus.RUNNING.value:
-                key = "names:" + str(root)
-                cached = _count_cache.get(key)
-                stale = not cached or datetime.utcnow().timestamp() - cached[0] >= 60
-                if stale:
-                    _start_walk(key, _remember_names, key, root, suffix)
-                if cached and cached[1]:
-                    files = cached[1]
-            else:
-                cached = _count_cache.get(str(root))
-                stale = not cached or datetime.utcnow().timestamp() - cached[0] >= 60
-                if stale:
-                    _start_walk(str(root), _count_packages, root, suffix)
-                if cached:
-                    files, size = cached[1], cached[2]
-                elif mirror.size_bytes:
-                    size = mirror.size_bytes
+        if cached and cached[2]:
+            pool_bytes = cached[2]
+    files = shown_package_count(disk, noted)
     position = None
     if mirror.status == "queued":
         try:
@@ -537,6 +606,7 @@ def _progress_body(mirror, item: dict):
         "line": item.get("line") or "",
         "files": files,
         "size_bytes": size,
+        "pool_bytes": pool_bytes,
         "size_kind": size_kind,
         "position": position,
         "last_error": mirror.last_error or "",
@@ -546,6 +616,7 @@ def _progress_body(mirror, item: dict):
 
 @router.get("/{mirror_id}/logs", response_model=list[SyncLogOut])
 async def get_sync_logs(mirror_id: int, db: AsyncSession = Depends(get_db)):
+    await sweep_stale()
     result = await db.execute(
         select(SyncLog)
         .where(SyncLog.mirror_id == mirror_id)

@@ -1,8 +1,21 @@
+import ast
 import unittest
 from datetime import datetime
+from pathlib import Path
 from types import SimpleNamespace
 
-from app.services.jobs import build_tasks
+
+def _load(names):
+    path = Path(__file__).resolve().parents[1] / "app" / "services" / "jobs.py"
+    tree = ast.parse(path.read_text())
+    keep = [node for node in tree.body if isinstance(node, ast.FunctionDef) and node.name in names]
+    ns = {"datetime": datetime}
+    exec(compile(ast.Module(keep, []), str(path), "exec"), ns)
+    return ns
+
+
+JOBS = _load({"build_tasks", "_stamp", "_iso", "interrupt_job"})
+build_tasks = JOBS["build_tasks"]
 
 
 class JobTests(unittest.TestCase):
@@ -30,6 +43,13 @@ class JobTests(unittest.TestCase):
         titles = [row["title"] for row in rows]
         self.assertEqual(titles.count("Sync B"), 1)
         self.assertIn("queued", [row["status"] for row in rows])
+
+    def test_restart_marks_running_failed(self):
+        job = JOBS["interrupt_job"]({"id": 4, "status": "running", "line": "запуск"})
+        self.assertEqual(job["status"], "failed")
+        self.assertIn("перезапуском", job["line"])
+        done = JOBS["interrupt_job"]({"id": 5, "status": "success", "line": ""})
+        self.assertEqual(done["status"], "success")
 
 
 if __name__ == "__main__":

@@ -1,5 +1,8 @@
 <footer class="app-footer border-top text-secondary">
-    <div class="container py-3">Локальный менеджер репозиториев</div>
+    <div class="container py-3 d-flex justify-content-between flex-wrap gap-2">
+        <span>Локальный менеджер репозиториев</span>
+        <a href="/static/LICENSE.txt">GNU GPL v3</a>
+    </div>
 </footer>
 <div id="appToast" class="app-toast" role="status"></div>
 <div class="modal fade" id="errorModal" tabindex="-1">
@@ -29,8 +32,9 @@
             <div class="modal-header"><h5 class="modal-title">Удаление</h5><button type="button" class="btn-close" data-bs-dismiss="modal"></button></div>
             <div class="modal-body"><p id="deleteText" class="mb-0"></p></div>
             <div class="modal-footer">
+                <button class="btn btn-outline-secondary btn-sm" type="button" data-bs-dismiss="modal">Отмена</button>
                 <button class="btn btn-outline-secondary btn-sm" type="button" onclick="confirmDelete(false)">Только запись</button>
-                <button class="btn btn-danger btn-sm" type="button" onclick="confirmDelete(true)">С файлами</button>
+                <button class="btn btn-danger btn-sm" type="button" onclick="confirmDelete(true)">Навсегда, с файлами</button>
             </div>
         </div>
     </div>
@@ -61,7 +65,7 @@
                 <div class="mb-3">
                     <label class="form-label" for="minFree">Минимум свободно, ГБ</label>
                     <input id="minFree" class="form-control" placeholder="пусто = без лимита">
-                    <div class="form-text">Пустое поле — без ограничения. Новый sync не стартует, если свободно меньше. Во время sync проверка каждые 30 секунд, ниже порога процесс останавливается.</div>
+                    <div class="form-text">Пустое поле — без ограничения. Новый sync не стартует, если свободно меньше. Во время sync проверка каждые 15 секунд, ниже порога процесс останавливается.</div>
                 </div>
                 <div class="mb-3">
                     <label class="form-label" for="maxSync">Одновременно sync</label>

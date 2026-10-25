@@ -22,7 +22,7 @@ def _load(rel, names, consts=()):
     return ns
 
 
-SYNC = _load("app/api/sync.py", {"plan_starts"})
+SYNC = _load("app/api/sync.py", {"plan_starts", "should_queue"})
 RPM = _load("app/services/rpm.py", {"proc_cmdlines", "createrepo_busy", "drop_stale_repodata"})
 MIRRORS = _load("app/api/mirrors.py", {"_package_arch_ok"})
 PROXY = _load("app/services/proxy.py", {"redact_proxy_url", "restore_proxy_url"}, {"_USERINFO"})
@@ -43,6 +43,12 @@ class PlanTests(unittest.TestCase):
         start, back = SYNC["plan_starts"]([1, 2], 2, 2, None, {1: "rpm", 2: "rpm"})
         self.assertEqual(start, [])
         self.assertEqual(back, [1, 2])
+
+    def test_rpm_is_not_blocked_by_waiting_deb(self):
+        queue = SYNC["should_queue"]
+        self.assertFalse(queue(1, 5, "rpm", True, True, False))
+        self.assertTrue(queue(1, 5, "deb", True, False, False))
+        self.assertTrue(queue(5, 5, "rpm", False, False, False))
 
 
 class RepodataTests(unittest.TestCase):

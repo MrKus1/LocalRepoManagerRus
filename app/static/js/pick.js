@@ -12,6 +12,9 @@ function visiblePickBoxes() {
 }
 function updatePickBar() {
     const n = document.querySelectorAll('.pick-mirror:checked').length;
+    const bar = document.getElementById('pickBar');
+    const picking = document.body.classList.contains('picking');
+    if (bar) bar.classList.toggle('d-none', !picking);
     const count = document.getElementById('pickCount');
     if (count) count.textContent = 'выбрано ' + n;
     const sync = document.getElementById('syncPicked');
@@ -34,13 +37,13 @@ function markRunning(id) {
     const status = document.getElementById('status-' + id);
     if (status) {
         status.dataset.status = 'running';
-        status.textContent = '● идёт';
+        status.textContent = 'идёт';
         status.className = 'status-running';
         status.dataset.live = '1';
     }
     const card = document.getElementById('card-' + id);
     if (!card) return;
-    card.className = 'card h-100 card-running';
+    card.className = 'card h-100 card-running' + (card.parentElement && card.parentElement.dataset.enabled === '0' ? ' card-off' : '');
     if (card.parentElement) card.parentElement.dataset.status = 'running';
     const syncBtn = card.querySelector('.sync-btn');
     const stopBtn = card.querySelector('.stop-btn');

@@ -4,27 +4,35 @@
 """
 
 import asyncio
+import gzip
+import io
+import json
 import logging
 import shutil
+import time
 from pathlib import Path
 from typing import Optional, Tuple
 
 from app.config import settings
-from app.guards import publish_arch_flag
+from app.guards import aptly_show_mismatch, indexes_from_release, publish_arch_flag, sum_package_sizes
 
 logger = logging.getLogger(__name__)
 
 
 async def run_cmd(cmd: list[str], cwd: Optional[str] = None) -> Tuple[int, str, str]:
-    """Запуск команды асинхронно"""
+    """Запуск команды асинхронно. stdbuf отдаёт строки сразу, чтобы счётчик не ждал конца процесса."""
     from app.services.procs import track, untrack, note
     from app.services.proxy import proxy_env
+    env = proxy_env()
+    env["PYTHONUNBUFFERED"] = "1"
+    if cmd and cmd[0] != "stdbuf" and Path("/usr/bin/stdbuf").is_file():
+        cmd = ["/usr/bin/stdbuf", "-oL", "-eL", *cmd]
     process = await asyncio.create_subprocess_exec(
         *cmd,
         stdout=asyncio.subprocess.PIPE,
         stderr=asyncio.subprocess.STDOUT,
         cwd=cwd,
-        env=proxy_env(),
+        env=env,
         start_new_session=True,
     )
     mirror_id = track(process)
@@ -55,6 +63,54 @@ def aptly_bin() -> str:
     return configured
 
 
+_ESTIMATE_TTL = 12 * 3600
+_estimate_lock = asyncio.Lock()
+
+
+def _estimate_file() -> Path:
+    return settings.STORAGE_ROOT / "tmp" / "estimates.json"
+
+
+def _estimate_cache() -> dict:
+    path = _estimate_file()
+    if not path.exists():
+        return {}
+    try:
+        data = json.loads(path.read_text())
+    except (OSError, json.JSONDecodeError):
+        return {}
+    return data if isinstance(data, dict) else {}
+
+
+def _estimate_key(url: str, distribution: str, components: str, architectures: str) -> str:
+    return "|".join([
+        (url or "").rstrip("/").lower(),
+        (distribution or "stable").strip(),
+        components or "main",
+        architectures or "amd64",
+    ])
+
+
+def read_index_text(blob: bytes, limit: int = 200 * 1024 * 1024) -> str:
+    """Читает Packages или Packages.gz, не разворачивая больше limit байт."""
+    if blob[:2] == b"\x1f\x8b":
+        chunks = []
+        total = 0
+        with gzip.GzipFile(fileobj=io.BytesIO(blob)) as handle:
+            while True:
+                piece = handle.read(1024 * 1024)
+                if not piece:
+                    break
+                total += len(piece)
+                if total > limit:
+                    raise ValueError("индекс Packages больше 200 МБ")
+                chunks.append(piece)
+        return b"".join(chunks).decode("utf-8", "replace")
+    if len(blob) > limit:
+        raise ValueError("индекс Packages больше 200 МБ")
+    return blob.decode("utf-8", "replace")
+
+
 class DebService:
     def __init__(self):
         self.aptly = aptly_bin()
@@ -80,6 +136,20 @@ class DebService:
         ]
         # components добавляются как отдельные аргументы
         cmd.extend(components.split(","))
+
+        try:
+            names = await self.list_mirrors()
+        except RuntimeError as exc:
+            return False, str(exc)
+        if name in names:
+            code, out, err = await run_cmd([self.aptly, "mirror", "show", name])
+            text = out or err
+            if code != 0:
+                return False, (text or "aptly mirror show")[:800]
+            reason = aptly_show_mismatch(text, url, distribution, components, architectures)
+            if reason:
+                return False, reason
+            return True, "подхвачено существующее зеркало aptly"
 
         code, out, err = await run_cmd(cmd)
         if code != 0:
@@ -234,6 +304,57 @@ class DebService:
         ]
         code, out, err = await run_cmd(cmd)
         return code == 0, err or out
+
+    async def estimate(self, url: str, distribution: str, components: str, architectures: str) -> dict:
+        """Сколько пакетов и байт в индексе. Кэш 12 часов, без повторной закачки при каждом открытии страницы."""
+        key = _estimate_key(url, distribution, components, architectures)
+        cached = _estimate_cache().get(key) or {}
+        if cached and time.time() - float(cached.get("at") or 0) < _ESTIMATE_TTL and not cached.get("error"):
+            return {"packages": cached.get("packages"), "bytes": cached.get("bytes"), "error": ""}
+        async with _estimate_lock:
+            cached = _estimate_cache().get(key) or {}
+            if cached and time.time() - float(cached.get("at") or 0) < _ESTIMATE_TTL and not cached.get("error"):
+                return {"packages": cached.get("packages"), "bytes": cached.get("bytes"), "error": ""}
+            if cached.get("error") and time.time() - float(cached.get("at") or 0) < 600:
+                return {"packages": None, "bytes": None, "error": cached.get("error")}
+            payload = await self._fetch_estimate(url, distribution, components, architectures)
+            store = _estimate_cache()
+            store[key] = {**payload, "at": time.time()}
+            path = _estimate_file()
+            path.parent.mkdir(parents=True, exist_ok=True)
+            path.write_text(json.dumps(store))
+            return payload
+
+    async def _fetch_estimate(self, url: str, distribution: str, components: str, architectures: str) -> dict:
+        from app.services.rpm import download_checked
+
+        root = (url or "").rstrip("/")
+        dist = distribution or "stable"
+        dest = settings.STORAGE_ROOT / "tmp" / "estimate-index"
+        dest.parent.mkdir(parents=True, exist_ok=True)
+        release_url = f"{root}/dists/{dist}/Release"
+        final, err = await download_checked(release_url, dest)
+        if err or not dest.exists():
+            dest.unlink(missing_ok=True)
+            return {"packages": None, "bytes": None, "error": err or "Release недоступен"}
+        release = dest.read_text(errors="replace")
+        dest.unlink(missing_ok=True)
+        texts = []
+        for name in indexes_from_release(release, components, architectures):
+            final, err = await download_checked(f"{root}/dists/{dist}/{name}", dest)
+            if err or not dest.exists():
+                dest.unlink(missing_ok=True)
+                continue
+            try:
+                texts.append(read_index_text(dest.read_bytes()))
+            except (OSError, ValueError, gzip.BadGzipFile) as exc:
+                dest.unlink(missing_ok=True)
+                return {"packages": None, "bytes": None, "error": str(exc)[:200]}
+            dest.unlink(missing_ok=True)
+        if not texts:
+            return {"packages": None, "bytes": None, "error": "индекс Packages не скачался"}
+        count, total = sum_package_sizes(texts)
+        return {"packages": count, "bytes": total, "error": ""}
 
     async def run_check(self, cmd: list[str]) -> Tuple[int, str, str]:
         return await run_cmd(cmd)

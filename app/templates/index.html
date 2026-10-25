@@ -5,7 +5,7 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Менеджер репозиториев</title>
     <link href="/static/css/bootstrap.min.css" rel="stylesheet">
-    <link href="/static/css/app.css?v=22" rel="stylesheet">
+    <link href="/static/css/app.css?v=39" rel="stylesheet">
 </head>
 <body>
 <div class="page-main">
@@ -19,10 +19,7 @@
     </ul>
     <div id="tab-mirrors">
     <div class="page-head">
-        <div>
-            <h2 class="mb-0">Зеркала</h2>
-            <div id="mirrorSummary" class="small text-muted mt-1">{% if mirrors %}…{% else %}список пуст{% endif %}</div>
-        </div>
+        <div id="mirrorSummary" class="mirror-summary">{% if mirrors %}…{% else %}список пуст{% endif %}</div>
         <div class="page-actions">
             <button class="btn btn-outline-primary btn-sm" type="button" onclick="syncAll()">Sync все</button>
             <a class="btn btn-outline-secondary btn-sm" href="/api/mirrors/export">Экспорт</a>
@@ -32,15 +29,22 @@
         </div>
     </div>
     {% if mirrors %}
-    <div class="mb-2 d-flex align-items-center gap-2 flex-wrap">
-        <button class="btn btn-outline-primary btn-sm filter-btn active" data-filter="all">Все</button>
-        <button class="btn btn-outline-secondary btn-sm filter-btn" data-filter="rpm">RPM</button>
-        <button class="btn btn-outline-secondary btn-sm filter-btn" data-filter="deb">DEB</button>
-        <button class="btn btn-outline-secondary btn-sm filter-btn" data-filter="failed">С ошибкой</button>
-        <button class="btn btn-outline-secondary btn-sm filter-btn" data-filter="running">Идёт</button>
+    <div class="mb-3 d-flex align-items-center gap-2 flex-wrap list-tools">
+        <span class="filter-switch">
+        <button class="btn btn-sm filter-btn active" data-filter="all">Все</button>
+        <button class="btn btn-sm filter-btn" data-filter="rpm">RPM</button>
+        <button class="btn btn-sm filter-btn" data-filter="deb">DEB</button>
+        <button class="btn btn-sm filter-btn" data-filter="failed">С ошибкой</button>
+        <button class="btn btn-sm filter-btn" data-filter="running">Идёт</button>
+        </span>
         <input id="mirrorSearch" class="form-control form-control-sm mirror-search" placeholder="Поиск зеркал...">
+        <span class="view-switch">
+            <button class="btn btn-outline-secondary btn-sm layout-btn active" id="viewCards" type="button" onclick="setMirrorLayout('cards')">Карточки</button>
+            <button class="btn btn-outline-secondary btn-sm layout-btn" id="viewRows" type="button" onclick="setMirrorLayout('rows')">Строки</button>
+        </span>
+        <button class="btn btn-outline-secondary btn-sm" id="pickToggle" type="button" onclick="togglePickMode()">Выбрать</button>
     </div>
-    <div class="pick-bar mb-4" id="pickBar">
+    <div class="pick-bar mb-4 d-none" id="pickBar">
         <label class="form-check mb-0 d-flex align-items-center gap-2">
             <input class="form-check-input mt-0" type="checkbox" id="pickAll" onchange="togglePickAll(this.checked)">
             <span class="small">Все видимые</span>
@@ -49,22 +53,28 @@
         <button class="btn btn-outline-primary btn-sm" type="button" id="syncPicked" onclick="syncPicked()" disabled>Синхронизировать выбранные</button>
         <button class="btn btn-outline-danger btn-sm" type="button" id="deletePicked" onclick="deletePicked()" disabled>Удалить выбранные</button>
     </div>
-    <div class="row">
+    <div class="row" id="mirrorGrid">
         {% for m in mirrors %}
         <div class="col-md-6 col-lg-4 mb-3 mirror-card" data-type="{{ m.type }}" data-status="{{ m.status }}" data-enabled="{{ '1' if m.enabled else '0' }}" data-name="{{ m.name|lower }}">
             {% set note = m.last_error or '' %}
             {% set soft = note.startswith('Прервано') or note.startswith('Остановлено') or note.startswith('Удаление прервано') %}
-            <div class="card h-100 card-{{ 'idle' if soft else m.status }}" id="card-{{ m.id }}">
-                <span class="reach-lamp" data-id="{{ m.id }}" data-status="{{ m.status }}" title="nginx: порт 80"></span>
+            <div class="card h-100 card-{{ 'idle' if soft else m.status }}{% if not m.enabled %} card-off{% endif %}" id="card-{{ m.id }}">
                 <div class="card-body">
-                    <div class="d-flex justify-content-between align-items-start">
-                        <h5 class="card-title mb-1 d-flex align-items-center gap-2"><input class="form-check-input pick-mirror mt-0" type="checkbox" data-id="{{ m.id }}" title="Выбрать" onclick="event.stopPropagation()" onchange="updatePickBar()"><a href="/mirrors/{{ m.id }}" class="text-decoration-none">{{ m.name }}</a></h5>
+                    <div class="title-row">
+                        <h5 class="card-title mb-0"><span class="nginx-mark"><span class="reach-lamp reach-lamp-inline" data-id="{{ m.id }}" data-status="{{ m.status }}" role="img" aria-label="nginx" title="nginx: порт 80"></span></span><input class="form-check-input pick-mirror mt-0" type="checkbox" data-id="{{ m.id }}" title="Выбрать" onclick="event.stopPropagation()" onchange="updatePickBar()"><a href="/mirrors/{{ m.id }}">{{ m.name }}</a></h5>
                         <span class="badge {% if m.type == 'deb' %}badge-deb{% else %}badge-rpm{% endif %}">{{ m.type | upper }}</span>
                     </div>
-                    <p class="mb-1"><span class="status-{{ 'idle' if soft else m.status }}" id="status-{{ m.id }}" data-status="{{ m.status }}">● {% if soft %}остановлено{% elif m.status == 'success' %}готово{% elif m.status == 'running' %}идёт{% elif m.status == 'queued' %}в очереди{% elif m.status == 'failed' %}ошибка{% else %}ожидает{% endif %}</span>
-                        <span class="text-muted small" id="size-{{ m.id }}">{% if m.size_bytes %}· {{ '%.1f'|format(m.size_bytes / 1073741824) }} ГБ{% endif %}</span>
-                        <span class="text-muted small" id="synced-{{ m.id }}">{% if m.last_sync %}· {{ m.last_sync.strftime('%d.%m %H:%M') }}{% endif %}</span>
-                        <span class="text-muted small" id="retry-{{ m.id }}"></span></p>
+                    <p class="meta-line mb-1">
+                        <span class="meta-bits">
+                        <span class="status-{{ 'idle' if soft else m.status }}" id="status-{{ m.id }}" data-status="{{ m.status }}">{% if soft %}остановлено{% elif m.status == 'success' %}готово{% elif m.status == 'running' %}идёт{% elif m.status == 'queued' %}в очереди{% elif m.status == 'failed' %}ошибка{% else %}ожидает{% endif %}</span>
+                        {% if not m.enabled %}<span class="badge badge-off">выключено</span>{% endif %}
+                        <span class="text-muted small" id="size-{{ m.id }}">{% if m.size_bytes %}{{ '%.1f'|format(m.size_bytes / 1073741824) }} ГБ{% endif %}</span>
+                        <span class="text-muted small" id="estimate-{{ m.id }}"></span>
+                        <span class="text-muted small" id="synced-{{ m.id }}">{% if m.last_sync %}{{ m.last_sync.strftime('%d.%m %H:%M') }}{% endif %}</span>
+                        <span class="text-muted small" id="retry-{{ m.id }}"></span>
+                        </span>
+                    </p>
+                    <div class="card-extra">
                     {% if m.schedule %}<p class="small text-muted mb-1 cron-human" data-cron="{{ m.schedule }}">{{ m.schedule }}</p>{% endif %}
                     {% if m.last_error %}
                     <div class="alert {{ 'alert-secondary' if soft else 'alert-danger' }} py-1 px-2 small err-line" id="err-{{ m.id }}" title="нажмите, чтобы увидеть полностью" onclick="showError(this)">{{ m.last_error }}</div>
@@ -72,11 +82,11 @@
                     <div class="alert alert-danger py-1 px-2 small err-line d-none" id="err-{{ m.id }}" title="нажмите, чтобы увидеть полностью" onclick="showError(this)"></div>
                     {% endif %}
                     <div class="progress card-progress mb-1 {% if m.status != 'running' %}d-none{% endif %}" id="barwrap-{{ m.id }}"><div id="bar-{{ m.id }}" class="progress-bar" style="width:0"></div></div>
-                    <p class="small text-muted mb-2 {% if m.status != 'running' %}d-none{% endif %}" id="progress-{{ m.id }}"></p>
+                    <p class="small text-muted mb-2 progress-note {% if m.status != 'running' %}d-none{% endif %}" id="progress-{{ m.id }}"></p>
+                    </div>
                     <div class="d-flex gap-2 card-actions">
                         <button class="btn btn-sm btn-outline-primary sync-btn" data-id="{{ m.id }}" onclick="syncMirror({{ m.id }})" {% if m.status == 'running' or m.status == 'queued' %}style="display:none"{% endif %}>Sync</button>
                         <button class="btn btn-sm btn-outline-warning stop-btn" data-id="{{ m.id }}" onclick="stopMirror({{ m.id }})" {% if m.status != 'running' and m.status != 'queued' %}style="display:none"{% endif %}>Стоп</button>
-                        <a class="btn btn-sm btn-outline-secondary" href="/mirrors/{{ m.id }}">Открыть</a>
                         <div class="dropdown">
                             <button class="btn btn-sm btn-outline-secondary dropdown-toggle" data-bs-toggle="dropdown" type="button">Ещё</button>
                             <ul class="dropdown-menu">
@@ -85,6 +95,7 @@
                                     onclick="copyMirrorLine(this)">Копировать строку</button></li>
                                 <li><button class="dropdown-item" type="button" onclick="editMirror({{ m.id }})">Настройки</button></li>
                                 <li><button class="dropdown-item" type="button" onclick="showContents({{ m.id }}, '{{ m.name }}')">Пакеты</button></li>
+                                <li><a class="dropdown-item" href="/mirrors/{{ m.id }}">Открыть</a></li>
                                 <li><button class="dropdown-item text-danger delete-item" type="button" onclick="deleteMirror({{ m.id }}, '{{ m.name }}')">Удалить</button></li>
                             </ul>
                         </div>
@@ -144,19 +155,19 @@
                 <div class="card-body">
                     <div class="d-flex justify-content-between">
                         <h5 class="card-title">{{ r.name }}</h5>
-                        <span class="badge {% if r.type == 'deb' %}badge-deb{% else %}badge-rpm{% endif %}">
-                            {{ r.type | upper }}
+                        <span class="badge {% if r.type == 'deb' %}badge-deb{% elif r.type == 'files' %}badge-files{% else %}badge-rpm{% endif %}">
+                            {% if r.type == 'files' %}ФАЙЛЫ{% else %}{{ r.type | upper }}{% endif %}
                         </span>
                     </div>
                     <p class="small text-muted text-truncate mb-2">/repo/local/{{ r.type }}/{{ r.name }}/</p>
-                    <div class="d-flex flex-wrap gap-2">
+                    <div class="d-flex gap-2 card-actions">
                         <input type="file" id="up-{{ r.id }}" hidden onchange="uploadPkg({{ r.id }}, this)">
                         <button class="btn btn-sm btn-outline-primary" type="button" onclick="document.getElementById('up-{{ r.id }}').click()">Загрузить</button>
                         <a class="btn btn-sm btn-outline-secondary" href="/repo/local/{{ r.type }}/{{ r.name }}/" target="_blank">Открыть</a>
-                        <button class="btn btn-sm btn-outline-secondary" type="button" onclick="navigator.clipboard.writeText(location.origin + '/repo/local/{{ r.type }}/{{ r.name }}/').then(() => toast('Строка скопирована'))">Копировать</button>
                         <div class="dropdown">
                             <button class="btn btn-sm btn-outline-secondary dropdown-toggle" data-bs-toggle="dropdown" data-bs-boundary="viewport" type="button">Ещё</button>
                             <ul class="dropdown-menu">
+                                <li><button class="dropdown-item" type="button" onclick="navigator.clipboard.writeText(location.origin + '/repo/local/{{ r.type }}/{{ r.name }}/').then(() => toast('Строка скопирована'))">Копировать</button></li>
                                 <li><button class="dropdown-item" type="button" onclick="showContents({{ r.id }}, '{{ r.name }}', 'local')">Содержимое</button></li>
                                 <li><button class="dropdown-item text-danger" type="button" onclick="deleteLocal({{ r.id }}, '{{ r.name }}')">Удалить</button></li>
                             </ul>
@@ -252,11 +263,11 @@
                         <label class="form-label">URL источника</label>
                         <input class="form-control" name="source_url" id="editUrl" required>
                     </div>
-                    <div class="mb-3">
+                    <div class="mb-3 edit-deb">
                         <label class="form-label">Distribution</label>
                         <input class="form-control" name="distribution" id="editDistribution">
                     </div>
-                    <div class="mb-3">
+                    <div class="mb-3 edit-deb">
                         <label class="form-label">Components</label>
                         <input class="form-control" name="components" id="editComponents">
                     </div>
@@ -264,7 +275,7 @@
                         <label class="form-label">Architectures</label>
                         <input class="form-control" name="architectures" id="editArch">
                     </div>
-                    <div class="mb-3">
+                    <div class="mb-3 edit-rpm">
                         <label class="form-label">Repoid</label>
                         <input class="form-control" name="repoid" id="editRepoid">
                     </div>
@@ -385,7 +396,7 @@
                 </div>
                 <div class="modal-footer">
                     <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Отмена</button>
-                    <button type="submit" class="btn btn-success">Создать</button>
+                    <button type="submit" class="btn btn-primary">Создать</button>
                 </div>
             </form>
         </div>
@@ -414,8 +425,8 @@
 </div>
 
 <script src="/static/js/bootstrap.bundle.min.js"></script>
-<script src="/static/js/app.js?v=22"></script>
-<script src="/static/js/pick.js?v=22"></script>
+<script src="/static/js/app.js?v=33"></script>
+<script src="/static/js/pick.js?v=28"></script>
 
 </body>
 </html>

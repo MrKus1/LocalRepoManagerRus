@@ -172,6 +172,7 @@ chown -R root:root "$INSTALL_DIR"
 # venv и .env должен читать сервис
 chown -R "$SERVICE_USER:$SERVICE_USER" "$INSTALL_DIR/venv" 2>/dev/null || true
 chown "$SERVICE_USER:$SERVICE_USER" "$INSTALL_DIR/.env"
+chmod 600 "$INSTALL_DIR/.env"
 
 # --- systemd ---
 echo "==> Установка systemd unit"

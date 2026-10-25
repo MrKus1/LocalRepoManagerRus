@@ -11,7 +11,7 @@ function askDelete(name, onChoice) {
     const text = document.getElementById('deleteText');
     const modal = document.getElementById('deleteModal');
     if (!text || !modal) { onChoice(confirm('Удалить файлы?')); return; }
-    text.textContent = 'Удалить «' + name + '»?';
+    text.textContent = 'Удалить «' + name + '»? Только запись оставит файлы на диске. Навсегда сотрёт и запись, и файлы.';
     _deleteAction = onChoice;
     bootstrap.Modal.getOrCreateInstance(modal).show();
 }
@@ -73,28 +73,37 @@ function updateRunCount() {
         sum.textContent = 'список пуст';
         return;
     }
-    let text = 'включено ' + enabled + ' · в ошибке ' + failed + ' · качается ' + running;
-    if (visible !== cards.length) text += ' · показано ' + visible;
-    sum.textContent = text;
+    const fail = '<span class="sum-chip' + (failed ? ' sum-bad' : '') + '">в ошибке ' + failed + '</span>';
+    const run = '<span class="sum-chip' + (running ? ' sum-run' : '') + '">качается ' + running + '</span>';
+    let text = '<span class="sum-chip">включено ' + enabled + '</span>' + fail + run;
+    if (visible !== cards.length) text += '<span class="sum-chip">показано ' + visible + '</span>';
+    sum.innerHTML = text;
 }
 async function refreshLamp(el) {
     if (!el || !el.dataset.id) return;
     const res = await fetch('/api/mirrors/' + el.dataset.id + '/client-check');
     const data = await res.json().catch(() => ({ok: false}));
-    el.className = 'reach-lamp ' + (data.ok ? 'lamp-green' : 'lamp-red');
+    const inline = el.classList.contains('reach-lamp-inline') ? ' reach-lamp-inline' : '';
+    el.className = 'reach-lamp' + inline + ' ' + (data.ok ? 'lamp-green' : 'lamp-red');
     el.title = data.ok ? 'nginx отдал 200' : 'nginx не отдал репозиторий';
+    el.setAttribute('aria-label', el.title);
+}
+function paintCard(card, tone) {
+    if (!card) return;
+    const off = card.parentElement && card.parentElement.dataset.enabled === '0';
+    card.className = 'card h-100 card-' + tone + (off ? ' card-off' : '');
 }
 function markQueued(id) {
     const status = document.getElementById('status-' + id);
     if (status) {
         status.dataset.status = 'queued';
-        status.textContent = '● в очереди';
+        status.textContent = 'в очереди';
         status.className = 'status-queued';
         status.dataset.live = '1';
     }
     const card = document.getElementById('card-' + id);
     if (!card) return;
-    card.className = 'card h-100 card-queued';
+    paintCard(card, 'queued');
     card.parentElement.dataset.status = 'queued';
     const syncBtn = card.querySelector('.sync-btn');
     const stopBtn = card.querySelector('.stop-btn');
@@ -122,7 +131,7 @@ async function syncAll() {
             const status = document.getElementById('status-' + m.id);
             if (status) {
                 status.dataset.status = 'running';
-                status.textContent = '● идёт';
+                status.textContent = 'идёт';
                 status.className = 'status-running';
                 status.dataset.live = '1';
             }
@@ -337,7 +346,7 @@ fetch('/api/cache/').then(r => r.json()).then(rows => {
             ? '[' + r.name + ']' + nl + 'name=' + r.name + nl + 'baseurl=http://' + location.hostname + '/cache/' + r.name + '/' + nl + 'gpgcheck=0' + nl + 'enabled=1'
             : 'deb http://' + location.hostname + '/cache/' + r.name + ' ' + (r.distribution || 'bookworm') + ' ' + (r.component || 'main');
         const safe = line.replace(/</g, '');
-        return '<div class="col-md-6 col-lg-4 mb-3"><div class="card h-100"><div class="card-body"><h5>' + r.name + '</h5><p class="small text-muted text-uppercase">' + r.type + '</p><p class="small text-truncate" title="' + r.source_url + '">источник: ' + r.source_url + '</p><div class="d-flex flex-wrap gap-1"><button class="btn btn-sm btn-outline-secondary" type="button" onclick="showCacheLine(' + r.id + ')">Строка</button><button class="btn btn-sm btn-outline-secondary" type="button" onclick="copyCache(' + r.id + ')">Копировать</button><div class="dropdown"><button class="btn btn-sm btn-outline-secondary dropdown-toggle" data-bs-toggle="dropdown" data-bs-boundary="viewport" type="button">Ещё</button><ul class="dropdown-menu"><li><button class="dropdown-item" type="button" onclick="downloadCache(' + r.id + ', \'' + r.name + '\', \'' + r.type + '\')">Скачать</button></li><li><button class="dropdown-item" type="button" onclick="editCache(' + r.id + ')">Ссылка</button></li><li><button class="dropdown-item" type="button" onclick="showCacheFiles(' + r.id + ', \'' + r.name + '\')">Файлы</button></li><li><button class="dropdown-item text-danger" type="button" onclick="deleteCache(' + r.id + ', \'' + r.name + '\')">Удалить</button></li></ul></div></div></div></div></div>';
+        return '<div class="col-md-6 col-lg-4 mb-3"><div class="card h-100"><div class="card-body"><div class="d-flex justify-content-between align-items-start"><h5 class="card-title mb-1">' + r.name + '</h5><span class="badge ' + (r.type === 'deb' ? 'badge-deb' : 'badge-rpm') + '">' + String(r.type).toUpperCase() + '</span></div><p class="small text-truncate text-muted mb-2" title="' + r.source_url + '">' + r.source_url + '</p><div class="d-flex gap-2 card-actions"><button class="btn btn-sm btn-outline-primary" type="button" onclick="showCacheLine(' + r.id + ')">Строка</button><button class="btn btn-sm btn-outline-secondary" type="button" onclick="showCacheFiles(' + r.id + ', \'' + r.name + '\')">Открыть</button><div class="dropdown"><button class="btn btn-sm btn-outline-secondary dropdown-toggle" data-bs-toggle="dropdown" data-bs-boundary="viewport" type="button">Ещё</button><ul class="dropdown-menu"><li><button class="dropdown-item" type="button" onclick="copyCache(' + r.id + ')">Копировать</button></li><li><button class="dropdown-item" type="button" onclick="downloadCache(' + r.id + ', \'' + r.name + '\', \'' + r.type + '\')">Скачать</button></li><li><button class="dropdown-item" type="button" onclick="editCache(' + r.id + ')">Ссылка</button></li><li><button class="dropdown-item text-danger" type="button" onclick="deleteCache(' + r.id + ', \'' + r.name + '\')">Удалить</button></li></ul></div></div></div></div></div>';
     }).join('') || '<div class="col-12"><div class="empty-state"><h3>Кэшей нет</h3><p>Пакет скачается, когда клиент первый раз его запросит.</p></div></div>';
     rows.forEach(r => {
         const line = r.type === 'rpm'
@@ -436,24 +445,16 @@ async function pollJobs() {
         }).join('') : '<tr><td colspan="3" class="text-muted">Задач ещё нет.</td></tr>';
     }
     jobs.forEach(j => {
-        if (jobSeen[j.id] === 'running' && j.status !== 'running' && String(j.title).indexOf('Удаление') === 0) {
+        if (jobSeen[j.id] === 'running' && j.status !== 'running' && j.status !== 'queued' && String(j.title).indexOf('Удаление') === 0) {
+            if (j.status === 'success') sessionStorage.setItem('debPoolHint', '1');
             location.reload();
         }
         jobSeen[j.id] = j.status;
     });
 }
 document.querySelectorAll('.reach-lamp').forEach(async el => {
-    if (el.dataset.status === 'running' || el.dataset.status === 'queued') {
-        el.className = 'reach-lamp lamp-yellow';
-        el.title = 'синхронизируется';
-        return;
-    }
-    const res = await fetch('/api/mirrors/' + el.dataset.id + '/client-check');
-    const data = await res.json().catch(() => ({ok: false}));
-    el.className = 'reach-lamp ' + (data.ok ? 'lamp-green' : 'lamp-red');
-    el.title = data.ok ? 'nginx отдал 200' : 'nginx не отдал репозиторий';
-    const label = document.getElementById('lamp-label-' + el.dataset.id);
-    if (label) label.textContent = data.ok ? 'nginx : OK' : 'nginx : нет';
+    if (!el.dataset.id) return;
+    refreshLamp(el);
 });
 
 let currentFilter = 'all';
@@ -473,15 +474,53 @@ document.getElementById('mirrorSearch')?.addEventListener('input', applyMirrorVi
 document.querySelectorAll('.filter-btn').forEach(btn => {
     btn.addEventListener('click', () => {
         document.querySelectorAll('.filter-btn').forEach(b => {
-            b.classList.remove('active', 'btn-primary');
-            b.classList.add('btn-outline-primary');
+            b.classList.remove('active', 'btn-primary', 'btn-outline-primary');
+            b.classList.add('btn-outline-secondary');
         });
+        btn.classList.remove('btn-outline-secondary');
         btn.classList.add('active', 'btn-primary');
-        btn.classList.remove('btn-outline-primary');
         currentFilter = btn.dataset.filter;
         applyMirrorView();
     });
 });
+
+function setMirrorLayout(mode) {
+    const grid = document.getElementById('mirrorGrid');
+    if (!grid) return;
+    const rows = mode === 'rows';
+    grid.classList.toggle('view-rows', rows);
+    document.querySelectorAll('.layout-btn').forEach(btn => btn.classList.remove('active'));
+    const current = document.getElementById(rows ? 'viewRows' : 'viewCards');
+    if (current) current.classList.add('active');
+    try { localStorage.setItem('mirrorLayout', rows ? 'rows' : 'cards'); } catch (e) {}
+}
+function togglePickMode() {
+    const on = !document.body.classList.contains('picking');
+    document.body.classList.toggle('picking', on);
+    const btn = document.getElementById('pickToggle');
+    if (btn) {
+        btn.textContent = on ? 'Готово' : 'Выбрать';
+        btn.classList.toggle('btn-primary', on);
+        btn.classList.toggle('btn-outline-secondary', !on);
+    }
+    if (!on) {
+        document.querySelectorAll('.pick-mirror').forEach(box => { box.checked = false; });
+        const all = document.getElementById('pickAll');
+        if (all) { all.checked = false; all.indeterminate = false; }
+    }
+    if (typeof updatePickBar === 'function') updatePickBar();
+}
+if (document.getElementById('mirrorGrid')) {
+    let saved = 'cards';
+    try {
+        if (localStorage.getItem('mirrorLayoutDefault') !== '1') {
+            localStorage.setItem('mirrorLayout', 'cards');
+            localStorage.setItem('mirrorLayoutDefault', '1');
+        }
+        saved = localStorage.getItem('mirrorLayout') || 'cards';
+    } catch (e) {}
+    setMirrorLayout(saved === 'rows' ? 'rows' : 'cards');
+}
 
 async function pollProgress() {
     const nodes = document.querySelectorAll('[id^="status-"]');
@@ -494,11 +533,11 @@ async function pollProgress() {
         node.dataset.status = data.status;
         const statusText = softStop(data.last_error) ? 'остановлено' : ((data.status === 'queued' && data.position) ? ('в очереди, место ' + data.position) : statusRu(data.status));
         const tone = softStop(data.last_error) ? 'idle' : data.status;
-        node.textContent = '● ' + statusText;
+        node.textContent = statusText;
         node.className = 'status-' + tone;
         const card = document.getElementById('card-' + id);
         if (card) {
-            card.className = 'card h-100 card-' + tone;
+            paintCard(card, tone);
             card.parentElement.dataset.status = data.status;
         }
         const syncBtn = card && card.querySelector('.sync-btn');
@@ -508,12 +547,7 @@ async function pollProgress() {
         const delBtn = card && card.querySelector('.delete-item');
         if (delBtn) delBtn.disabled = false;
         const lamp = card && card.querySelector('.reach-lamp');
-        if (lamp && (data.status === 'running' || data.status === 'queued')) {
-            lamp.className = 'reach-lamp lamp-yellow';
-            lamp.title = data.status === 'queued' ? 'в очереди' : 'синхронизируется';
-        } else if (lamp) {
-            refreshLamp(lamp);
-        }
+        if (lamp && data.status !== 'running' && data.status !== 'queued') refreshLamp(lamp);
         const err = document.getElementById('err-' + id);
         if (err) {
             if (data.last_error) {
@@ -528,11 +562,14 @@ async function pollProgress() {
         }
         const sizeEl = document.getElementById('size-' + id);
         if (sizeEl) {
-            if (!data.size_bytes) sizeEl.textContent = '';
-            else sizeEl.textContent = (data.size_kind === 'pool' ? '· пул ' : '· ') + fmtGb(data.size_bytes);
+            if (data.pool_bytes) {
+                const own = data.size_bytes ? ('этот ' + fmtGb(data.size_bytes) + ' · ') : '';
+                sizeEl.textContent = own + 'пул ' + fmtGb(data.pool_bytes);
+            } else if (!data.size_bytes) sizeEl.textContent = '';
+            else sizeEl.textContent = fmtGb(data.size_bytes);
         }
         const synced = document.getElementById('synced-' + id);
-        if (synced && data.last_sync) synced.textContent = '· ' + data.last_sync;
+        if (synced && data.last_sync) synced.textContent = data.last_sync;
         node.dataset.live = (data.status === 'running' || data.status === 'queued') ? '1' : '';
         const wrap = document.getElementById('barwrap-' + id);
         const bar = document.getElementById('bar-' + id);
@@ -542,15 +579,18 @@ async function pollProgress() {
             if (label) label.classList.remove('d-none');
             if (bar && data.percent !== null && data.percent !== undefined) {
                 bar.style.width = data.percent + '%';
-                bar.classList.remove('progress-bar-striped', 'progress-bar-animated');
+                bar.classList.remove('progress-bar-striped', 'progress-bar-animated', 'bar-unknown');
                 if (label) label.textContent = data.percent + '% · ' + data.files + ' пакетов';
             } else if (bar) {
-                bar.style.width = '100%';
-                bar.classList.add('progress-bar-striped', 'progress-bar-animated');
-                if (label) label.textContent = 'идёт синхронизация · ' + data.files + ' пакетов';
+                bar.style.width = '';
+                bar.classList.remove('progress-bar-striped', 'progress-bar-animated');
+                bar.classList.add('bar-unknown');
+                const files = Number(data.files) || 0;
+                if (label) label.textContent = files ? ('идёт синхронизация · ' + files + ' пакетов') : 'идёт синхронизация';
             }
         } else {
             if (wrap) wrap.classList.add('d-none');
+            if (bar) bar.classList.remove('bar-unknown');
             if (label) { label.textContent = ''; label.classList.add('d-none'); }
         }
     }
@@ -562,6 +602,32 @@ async function pollProgress() {
 setInterval(pollProgress, 5000);
 pollProgress();
 updateRunCount();
+if (sessionStorage.getItem('debPoolHint')) {
+    sessionStorage.removeItem('debPoolHint');
+    toast('Файлы зеркала удалены. Общий пул aptly не уменьшился. Освободить место: меню → Почистить пул.');
+}
+function fmtCount(n) {
+    return String(n).replace(/\B(?=(\d{3})+(?!\d))/g, ' ');
+}
+async function loadEstimates() {
+    const cards = Array.from(document.querySelectorAll('.mirror-card[data-type="deb"]'));
+    for (const card of cards) {
+        const status = card.querySelector('[id^="status-"]');
+        const id = status && status.id.replace('status-', '');
+        const el = id && document.getElementById('estimate-' + id);
+        if (!el) continue;
+        el.textContent = 'считаю размер…';
+        try {
+            const res = await fetch('/api/mirrors/' + id + '/estimate');
+            const data = await res.json();
+            if (!res.ok || data.error || !data.bytes) { el.textContent = ''; continue; }
+            el.textContent = '≈ ' + fmtCount(data.packages) + ' пакетов, ' + fmtGb(data.bytes);
+        } catch (e) {
+            el.textContent = '';
+        }
+    }
+}
+loadEstimates();
 
 let contentsMirrorId = null;
 let contentsKind = 'mirror';
@@ -581,6 +647,9 @@ async function editMirror(id) {
     document.getElementById('editSchedule').value = m.schedule || '';
     document.getElementById('editDescription').value = m.description || '';
     document.getElementById('editEnabled').checked = !!m.enabled;
+    const deb = m.type === 'deb';
+    document.querySelectorAll('.edit-deb').forEach(el => el.classList.toggle('d-none', !deb));
+    document.querySelectorAll('.edit-rpm').forEach(el => el.classList.toggle('d-none', deb));
     new bootstrap.Modal(document.getElementById('editMirrorModal')).show();
 }
 
@@ -626,7 +695,7 @@ async function syncMirror(id) {
     const status = document.getElementById('status-' + id);
     if (status) {
         status.dataset.status = 'running';
-        status.textContent = '● идёт';
+        status.textContent = 'идёт';
         status.className = 'status-running';
         status.dataset.live = '1';
     }
@@ -658,7 +727,7 @@ async function stopMirror(id) {
     const status = document.getElementById('status-' + id);
     if (status) {
         status.dataset.status = 'failed';
-        status.textContent = '● остановлено';
+        status.textContent = 'остановлено';
         status.className = 'status-idle';
         status.dataset.live = '';
     }
@@ -900,7 +969,7 @@ async function refreshRetries() {
             const card = document.getElementById('card-' + id);
             const failed = card && card.parentElement && card.parentElement.dataset.status === 'failed';
             const item = data[id] || {};
-            el.textContent = failed && item.count ? (' · повтор ' + item.count + '/' + item.max) : '';
+            el.textContent = failed && item.count ? ('повтор ' + item.count + '/' + item.max) : '';
         });
     } catch (e) {}
 }

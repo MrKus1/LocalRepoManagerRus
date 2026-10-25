@@ -110,7 +110,7 @@ async def create_mirror(data: MirrorCreate, db: AsyncSession = Depends(get_db)):
             )
             if not ok:
                 raise HTTPException(status_code=500, detail=f"Ошибка aptly: {msg}")
-            aptly_created = True
+            aptly_created = "подхвачено" not in (msg or "")
 
         db.add(mirror)
         await db.flush()
@@ -203,7 +203,8 @@ async def import_mirrors(file: UploadFile = File(...), db: AsyncSession = Depend
                 if not ok:
                     errors.append(f"строка {lineno}: aptly: {msg[:200]}")
                     continue
-                created_aptly.append((name, distribution or "stable"))
+                if "подхвачено" not in (msg or ""):
+                    created_aptly.append((name, distribution or "stable"))
             db.add(mirror)
             created.append(name)
         await db.commit()
@@ -341,6 +342,21 @@ async def get_mirror(mirror_id: int, db: AsyncSession = Depends(get_db)):
     if not mirror:
         raise HTTPException(status_code=404, detail="Зеркало не найдено")
     return mirror
+
+
+@router.get("/{mirror_id}/estimate")
+async def mirror_estimate(mirror_id: int, db: AsyncSession = Depends(get_db)):
+    mirror = await db.get(Mirror, mirror_id)
+    if not mirror:
+        raise HTTPException(status_code=404, detail="Зеркало не найдено")
+    if mirror.type != "deb":
+        return {"packages": None, "bytes": None, "error": ""}
+    return await deb_service.estimate(
+        mirror.source_url,
+        mirror.distribution,
+        mirror.components,
+        mirror.architectures,
+    )
 
 
 @router.patch("/{mirror_id}", response_model=MirrorOut)
@@ -628,7 +644,7 @@ async def delete_mirror(
                     if row:
                         await session.delete(row)
                     await session.commit()
-                job["line"] = "Файлы удалены"
+                job["line"] = "Файлы удалены. Пул aptly не уменьшился — меню, «Почистить пул»."
             except Exception as exc:
                 from datetime import datetime
                 async with AsyncSessionLocal() as session:

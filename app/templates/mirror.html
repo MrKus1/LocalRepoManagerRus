@@ -5,10 +5,10 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>{{ mirror.name }} — Менеджер репозиториев</title>
     <link href="/static/css/bootstrap.min.css" rel="stylesheet">
-    <link href="/static/css/app.css?v=22" rel="stylesheet">
+    <link href="/static/css/app.css?v=39" rel="stylesheet">
 </head>
 <body data-page="mirror">
-<div class="page-main" id="mirrorPage" data-id="{{ mirror.id }}" data-name="{{ mirror.name }}" data-status="{{ mirror.status }}">
+<div class="page-main" id="mirrorPage" data-id="{{ mirror.id }}" data-name="{{ mirror.name }}" data-type="{{ mirror.type }}" data-status="{{ mirror.status }}">
 {% include '_nav.html' %}
 <div class="container mb-4">
     <a class="back-link" href="/">← К зеркалам</a>
@@ -16,15 +16,41 @@
         <h2 class="mb-0">{{ mirror.name }} <span class="badge {% if mirror.type == 'deb' %}badge-deb{% else %}badge-rpm{% endif %}">{{ mirror.type | upper }}</span></h2>
         <div class="page-actions">
             <span id="mirrorStatus" class="status-{{ mirror.status }}" data-status="{{ mirror.status }}">{% if mirror.status == 'success' %}готово{% elif mirror.status == 'running' %}идёт{% elif mirror.status == 'queued' %}в очереди{% elif mirror.status == 'failed' %}ошибка{% else %}ожидает{% endif %}</span>
+            {% if mirror.size_bytes %}<span class="text-muted small" id="repoSize">{{ '%.1f'|format(mirror.size_bytes / 1073741824) }} ГБ</span>{% else %}<span class="text-muted small" id="repoSize"></span>{% endif %}
+            <span class="text-muted small" id="repoEstimate"></span>
+            {% if mirror.last_sync %}<span class="text-muted small">{{ mirror.last_sync.strftime('%d.%m %H:%M') }}</span>{% endif %}
             <button class="btn btn-outline-primary btn-sm" type="button" id="syncBtn" onclick="mirrorSync()" {% if mirror.status == 'running' or mirror.status == 'queued' %}style="display:none"{% endif %}>Sync</button>
             <button class="btn btn-outline-warning btn-sm" type="button" id="stopBtn" onclick="mirrorStop()" {% if mirror.status != 'running' and mirror.status != 'queued' %}style="display:none"{% endif %}>Стоп</button>
-            <button class="btn btn-outline-danger btn-sm" type="button" id="deleteBtn" onclick="mirrorDelete()">Удалить</button>
         </div>
     </div>
-    <div class="row g-3">
+    <div class="card mb-3">
+        <div class="card-body">
+            <div class="d-flex justify-content-between align-items-center gap-2 flex-wrap">
+                <h5 class="mb-0 d-flex align-items-center gap-2"><span id="lamp" class="reach-lamp reach-lamp-inline" role="img" aria-label="nginx" title="nginx: порт 80"></span>Строка для клиента</h5>
+                <div class="d-flex gap-2">
+                    <button class="btn btn-sm btn-outline-primary" type="button" onclick="copySnippet()">Копировать</button>
+                    <a class="btn btn-sm btn-outline-secondary" href="/api/mirrors/{{ mirror.id }}/client-file">Скачать</a>
+                </div>
+            </div>
+            <pre id="snippet">{{ client_snippet }}</pre>
+            <p class="small text-muted mb-0">Путь на диске: {{ mirror.local_path }}</p>
+            <pre id="checkResult" class="small mt-2 mb-0"></pre>
+        </div>
+    </div>
+    <div class="card mb-3"><div class="card-body">
+        <h5>Пакеты</h5>
+        <input id="q" class="form-control mb-2" placeholder="поиск">
+        <div id="meta" class="small text-muted mb-2"></div>
+        <div id="list" style="max-height: 420px; overflow: auto;"></div>
+        <div class="d-flex justify-content-between align-items-center mt-2">
+            <button class="btn btn-sm btn-outline-secondary" id="pkgPrev" type="button">Назад</button>
+            <span id="pkgPage" class="small text-muted"></span>
+            <button class="btn btn-sm btn-outline-secondary" id="pkgNext" type="button">Дальше</button>
+        </div>
+    </div></div>
+    <div class="row g-3 mb-3">
         <div class="col-lg-6">
-            <div class="card" style="position:relative">
-                <span id="lamp" class="reach-lamp" style="position:absolute;top:12px;right:12px" title="nginx"></span>
+            <div class="card h-100">
                 <div class="card-body">
                 <h5>Настройки</h5>
                 <form id="editForm">
@@ -41,22 +67,7 @@
             </div>
         </div>
         <div class="col-lg-6">
-            <div class="card mb-3"><div class="card-body">
-                <div class="d-flex justify-content-between">
-                    <h5>Строка для клиента</h5>
-                    <a class="btn btn-sm btn-outline-secondary" href="/api/mirrors/{{ mirror.id }}/client-file">Скачать</a>
-                </div>
-                <pre id="snippet">{{ client_snippet }}</pre>
-                <p class="small text-muted mb-0">Путь на диске: {{ mirror.local_path }}</p>
-                <pre id="checkResult" class="small mt-2 mb-0"></pre>
-                {% if mirror.type == 'rpm' %}
-                <div class="mt-3">
-                    <button class="btn btn-sm btn-outline-warning" type="button" onclick="pruneOld()">Оставить последние версии</button>
-                    <p class="small text-muted mt-1 mb-0">Удалит старые RPM этого зеркала. Останется только последняя версия каждого пакета. Оборванный sync после этого не восстановить.</p>
-                </div>
-                {% endif %}
-            </div></div>
-            <div class="card"><div class="card-body">
+            <div class="card h-100"><div class="card-body">
                 <h5>История sync</h5>
                 <div style="max-height: 280px; overflow: auto;">
                 <table class="table table-sm mb-0" id="history">
@@ -65,7 +76,7 @@
                     {% for log in logs %}
                     <tr>
                         <td class="text-nowrap">{{ log.started_at.strftime('%d.%m %H:%M') if log.started_at else '' }}</td>
-                        <td>{% if log.status == 'success' %}прошла{% elif log.status == 'running' %}идёт{% else %}не прошла{% endif %}</td>
+                        <td class="hist-{{ log.status }}">{% if log.status == 'success' %}прошла{% elif log.status == 'running' %}идёт{% elif log.status == 'queued' %}в очереди{% else %}не прошла{% endif %}</td>
                     </tr>
                     {% else %}
                     <tr><td colspan="2" class="text-muted">Запусков ещё нет.</td></tr>
@@ -76,25 +87,29 @@
                 <p class="small text-muted mt-2 mb-0">Полный лог: /var/lib/repo-manager/logs/{{ mirror.name }}.log</p>
             </div></div>
         </div>
-        <div class="col-12">
-            <div class="card"><div class="card-body">
-                <h5>Пакеты</h5>
-                <input id="q" class="form-control mb-2" placeholder="поиск">
-                <div id="meta" class="small text-muted mb-2"></div>
-                <div id="list" style="max-height: 420px; overflow: auto;"></div>
-                <div class="d-flex justify-content-between align-items-center mt-2">
-                    <button class="btn btn-sm btn-outline-secondary" id="pkgPrev" type="button">Назад</button>
-                    <span id="pkgPage" class="small text-muted"></span>
-                    <button class="btn btn-sm btn-outline-secondary" id="pkgNext" type="button">Дальше</button>
+    </div>
+    <div class="card">
+        <div class="card-body">
+            <h5>Обслуживание</h5>
+            <div class="d-flex flex-wrap gap-4">
+                <div>
+                    <button class="btn btn-outline-danger btn-sm" type="button" id="deleteBtn" onclick="mirrorDelete()" {% if mirror.status == 'running' or mirror.status == 'queued' %}disabled{% endif %}>Удалить зеркало</button>
+                    <p class="small text-muted mt-1 mb-0">Спросит, удалять ли файлы.</p>
                 </div>
-            </div></div>
+                {% if mirror.type == 'rpm' %}
+                <div>
+                    <button class="btn btn-sm btn-outline-warning" type="button" onclick="pruneOld()">Оставить последние версии</button>
+                    <p class="small text-muted mt-1 mb-0">Удалит старые RPM этого зеркала. Останется только последняя версия каждого пакета. Оборванный sync после этого не восстановить.</p>
+                </div>
+                {% endif %}
+            </div>
         </div>
     </div>
 </div>
 </div>
 {% include '_shell.html' %}
 <script src="/static/js/bootstrap.bundle.min.js"></script>
-<script src="/static/js/app.js?v=22"></script>
-<script src="/static/js/mirror.js?v=22"></script>
+<script src="/static/js/app.js?v=33"></script>
+<script src="/static/js/mirror.js?v=29"></script>
 </body>
 </html>

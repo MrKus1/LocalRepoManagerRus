@@ -65,7 +65,7 @@ Group=repoman
 WorkingDirectory=/opt/repo-manager
 Environment=PATH=/opt/repo-manager/venv/bin:/usr/local/bin:/usr/bin
 EnvironmentFile=/opt/repo-manager/.env
-ExecStart=/opt/repo-manager/venv/bin/uvicorn app.main:app --host 0.0.0.0 --port 8000
+ExecStart=/opt/repo-manager/venv/bin/uvicorn app.main:app --host 127.0.0.1 --port 8000
 Restart=always
 RestartSec=5
 

@@ -1,5 +1,8 @@
 import asyncio
+import json
+import time
 from pathlib import Path
+from urllib.parse import urljoin
 
 import httpx
 from fastapi import APIRouter, Depends, HTTPException
@@ -11,9 +14,6 @@ from app.config import settings
 from app.guards import inside, name_error, url_error
 from app.database import get_db
 from app.models import CacheRepo
-import json
-import time
-
 from app.services.proxy import load_proxy, save_proxy
 
 router = APIRouter(prefix="/api/cache", tags=["cache"])
@@ -21,6 +21,24 @@ serve = APIRouter(tags=["cache-serve"])
 _locks: dict[str, asyncio.Lock] = {}
 _ALLOWED = (".deb", ".rpm", ".gz", ".bz2", ".xz", ".zst", ".xml")
 _NAMES = {"Packages", "Release", "InRelease", "repomd.xml"}
+
+
+async def _get_upstream(url: str, proxy: str | None) -> httpx.Response:
+    """Идёт по редиректам сам и не принимает переход на loopback или link-local."""
+    current = url
+    async with httpx.AsyncClient(proxy=proxy or None, timeout=120, follow_redirects=False) as client:
+        for _ in range(5):
+            err = url_error(current)
+            if err:
+                raise HTTPException(status_code=400, detail=err)
+            response = await client.get(current)
+            if response.status_code not in (301, 302, 303, 307, 308):
+                return response
+            location = response.headers.get("location")
+            if not location:
+                return response
+            current = urljoin(current, location)
+    raise HTTPException(status_code=502, detail="слишком много перенаправлений")
 
 
 def _root(name: str) -> Path:
@@ -203,8 +221,7 @@ async def fetch_cached(name: str, path: str, db: AsyncSession = Depends(get_db))
         proxy = load_proxy()
         url = repo.source_url.rstrip("/") + "/" + path.lstrip("/")
         try:
-            async with httpx.AsyncClient(proxy=proxy.get("proxy_url") or None, timeout=120, follow_redirects=True) as client:
-                response = await client.get(url)
+            response = await _get_upstream(url, proxy.get("proxy_url") or None)
         except httpx.HTTPError as exc:
             raise HTTPException(status_code=502, detail=str(exc)[:200]) from exc
         if response.status_code != 200:

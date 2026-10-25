@@ -11,7 +11,7 @@ from pathlib import Path
 from typing import Optional, Tuple
 
 from app.config import settings
-from app.guards import metadata_error
+from app.guards import http_status_and_location, metadata_error, next_hop, url_error
 
 logger = logging.getLogger(__name__)
 
@@ -53,12 +53,16 @@ def drop_stale_repodata(repo: Path, cmdlines: list[str] | None = None) -> str | 
 async def run_cmd(cmd: list[str], cwd: Optional[str] = None) -> Tuple[int, str, str]:
     from app.services.procs import track, untrack, note
     from app.services.proxy import proxy_env
+    env = proxy_env()
+    env["PYTHONUNBUFFERED"] = "1"
+    if cmd and cmd[0] != "stdbuf" and Path("/usr/bin/stdbuf").is_file():
+        cmd = ["/usr/bin/stdbuf", "-oL", "-eL", *cmd]
     process = await asyncio.create_subprocess_exec(
         *cmd,
         stdout=asyncio.subprocess.PIPE,
         stderr=asyncio.subprocess.STDOUT,
         cwd=cwd,
-        env=proxy_env(),
+        env=env,
         start_new_session=True,
     )
     mirror_id = track(process)
@@ -79,6 +83,53 @@ async def run_cmd(cmd: list[str], cwd: Optional[str] = None) -> Tuple[int, str, 
         untrack(mirror_id)
 
 
+async def _curl_once(url: str, dest: str | None) -> tuple[int, str]:
+    """Один запрос без -L. Заголовки в stdout, тело в dest или в никуда."""
+    from app.services.proxy import proxy_env
+    cmd = ["curl", "-sS", "-D", "-", "--max-redirs", "0", "--max-time", "180", url]
+    if dest:
+        cmd[1:1] = ["-o", dest]
+    else:
+        cmd[1:1] = ["-o", "/dev/null"]
+    process = await asyncio.create_subprocess_exec(
+        *cmd,
+        stdout=asyncio.subprocess.PIPE,
+        stderr=asyncio.subprocess.DEVNULL,
+        env=proxy_env(),
+    )
+    out, _ = await process.communicate()
+    return process.returncode or 0, out.decode(errors="replace")
+
+
+async def download_checked(url: str, dest: Path | None = None) -> tuple[str | None, str | None]:
+    """Идёт по редиректам сам. На loopback и link-local останавливается и не сохраняет файл."""
+    current = url
+    for _ in range(5):
+        err = url_error(current)
+        if err:
+            if dest:
+                dest.unlink(missing_ok=True)
+            return None, err
+        code, headers = await _curl_once(current, str(dest) if dest else None)
+        status, location = http_status_and_location(headers)
+        if status == 200 and code == 0:
+            return current, None
+        if dest:
+            dest.unlink(missing_ok=True)
+        if status in (301, 302, 303, 307, 308) and location:
+            nxt, hop_err = next_hop(current, location)
+            if hop_err or not nxt:
+                return None, hop_err or "редирект без адреса"
+            current = nxt
+            continue
+        if code != 0 and status is None:
+            return None, f"нет ответа: {current}"
+        return None, f"http={status or 'нет'}: {current}"
+    if dest:
+        dest.unlink(missing_ok=True)
+    return None, "слишком много перенаправлений"
+
+
 class RpmService:
     def __init__(self):
         self.createrepo = settings.CREATEREPO_BIN or "/usr/bin/createrepo_c"
@@ -95,6 +146,8 @@ class RpmService:
         dest.mkdir(parents=True, exist_ok=True)
 
         source = (source_url or "").rstrip("/") + "/" if source_url else ""
+        private = settings.STORAGE_ROOT / "tmp" / "dnf" / dest.name
+        private.mkdir(parents=True, exist_ok=True)
         cmd = [
             "dnf",
             "--exclude=*.src.rpm",
@@ -103,7 +156,10 @@ class RpmService:
             "--setopt=fastestmirror=0",
             "--setopt=retries=8",
             "--setopt=timeout=180",
-            "--setopt=max_parallel_downloads=2",
+            "--setopt=max_parallel_downloads=4",
+            f"--setopt=cachedir={private / 'cache'}",
+            f"--setopt=persistdir={private / 'persist'}",
+            f"--setopt=logdir={private / 'log'}",
             "reposync",
             "-p", str(dest.parent),
         ]
@@ -115,10 +171,10 @@ class RpmService:
         if repoid and not source_url:
             cmd.extend(["--repoid", repoid])
         if source_url:
-            url = source + "repodata/repomd.xml"
-            code, out, err = await run_cmd(["curl", "-fsSL", "-o", "/dev/null", "-w", "%{http_code}", "--max-time", "30", "-L", url])
-            if code != 0 or out.strip() != "200":
-                return False, f"repomd.xml недоступен: {url} http={out.strip() or 'нет'} {err.strip()[:200]}"
+            final, err = await download_checked(source + "repodata/repomd.xml")
+            if err or not final:
+                return False, f"repomd.xml недоступен: {source}repodata/repomd.xml {err or ''}".strip()
+            source = final.rsplit("repodata/", 1)[0]
             temp_name = dest.name
             cmd.extend([
                 f"--repofrompath={temp_name},{source}",
@@ -153,10 +209,8 @@ class RpmService:
         failed = []
         saved = []
         with tempfile.NamedTemporaryFile(prefix="repomd-", suffix=".xml") as tmp:
-            code, _out, err = await run_cmd([
-                "curl", "-fsSL", "--retry", "3", "--max-time", "60", "-o", tmp.name, source + "repodata/repomd.xml",
-            ])
-            if code != 0:
+            final, err = await download_checked(source + "repodata/repomd.xml", Path(tmp.name))
+            if err or not final:
                 return "repomd.xml не скачан: " + (err or "")[:160]
             text = Path(tmp.name).read_text(errors="replace")
         hrefs = re.findall(r'href="(repodata/[^"]+)"', text)
@@ -167,11 +221,8 @@ class RpmService:
                 continue
             filename = href.rsplit("/", 1)[-1]
             target = meta_dir / filename
-            code, _out, _err = await run_cmd([
-                "curl", "-fL", "--retry", "3", "--retry-delay", "2", "--max-time", "180",
-                "-o", str(target), source + href,
-            ])
-            if code != 0:
+            code_ok, hop_err = await download_checked(source + href, target)
+            if hop_err or not code_ok:
                 target.unlink(missing_ok=True)
                 failed.append(filename.split("-", 1)[-1])
             else:

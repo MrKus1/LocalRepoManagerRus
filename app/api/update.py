@@ -26,10 +26,17 @@ def current_version() -> str:
 
 
 def parse_version(value: str) -> tuple:
+    """1.2.9-1 и 1.2.8.16 сравниваются как числа, дефис не отбрасывает хвост."""
     parts = []
-    for item in (value or "").strip().split("."):
-        if item.isdigit():
-            parts.append(int(item))
+    buf = ""
+    for char in (value or "").strip():
+        if char.isdigit():
+            buf += char
+        elif buf:
+            parts.append(int(buf))
+            buf = ""
+    if buf:
+        parts.append(int(buf))
     return tuple(parts) or (0,)
 
 

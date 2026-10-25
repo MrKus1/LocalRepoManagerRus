@@ -1,14 +1,15 @@
 <nav class="navbar border-bottom mb-4">
     <div class="container">
-        <button class="menu-link" type="button" onclick="toggleMenu()" title="Меню" aria-label="Меню"><i></i><i></i><i></i></button>
-        <a class="navbar-brand mb-0" href="/">Менеджер репозиториев</a>
-        <span class="navbar-text text-end disk-slot">
-            <span id="runCount" class="small text-muted me-3"></span>
-            <span onclick="openSettings('diskModal')" title="Настройки места" style="cursor:pointer">
+        <div class="d-flex align-items-center gap-2">
+            <button class="menu-link" type="button" onclick="toggleMenu()" title="Меню" aria-label="Меню"><i></i><i></i><i></i></button>
+            <a class="navbar-brand mb-0" href="/">Менеджер репозиториев</a>
+        </div>
+        <div class="d-flex align-items-center gap-3 ms-auto">
+            <button class="disk-btn" type="button" onclick="openSettings('diskModal')" title="Настройки места">
                 <span id="diskInfo">диск: …</span>
-                <div class="disk-bar mt-1"><span id="diskBar" style="width:0"></span></div>
-            </span>
-        </span>
+                <span class="disk-bar mt-1"><span id="diskBar" style="width:0"></span></span>
+            </button>
+        </div>
     </div>
 </nav>
 <div class="side-backdrop" id="sideBackdrop" onclick="toggleMenu()"></div>
@@ -17,18 +18,17 @@
         <strong>Меню</strong>
         <button class="menu-close" type="button" onclick="toggleMenu()" aria-label="Закрыть меню">←</button>
     </div>
-    <a href="/#mirrors" onclick="return menuGo('mirrors')">Зеркала</a>
-    <a href="/#cache" onclick="return menuGo('cache')">Кэш</a>
-    <a href="/#local" onclick="return menuGo('local')">Локальные репозитории</a>
     <button class="menu-item" type="button" onclick="openSettings('tasksModal')">Задачи</button>
-    <button class="menu-item" type="button" onclick="document.getElementById('settingsTree').classList.toggle('d-none')">Настройки</button>
-    <div id="settingsTree" class="d-none">
-        <button class="menu-sub" type="button" onclick="openSettings('proxyModal')">Прокси</button>
-        <button class="menu-sub" type="button" onclick="openSettings('diskModal')">Место</button>
-        <button class="menu-sub" type="button" onclick="openSettings('cacheModal')">Очистка кэша</button>
-        <button class="menu-sub" type="button" onclick="openSettings('updateModal')">Обновление</button>
-        <button class="menu-sub text-danger" type="button" onclick="cleanupOrphans()">Убрать каталоги без зеркал…</button>
-        <button class="menu-sub" type="button" onclick="cleanupAptly()">Почистить пул…</button>
+    <div class="menu-label">Настройки</div>
+    <button class="menu-sub" type="button" onclick="openSettings('proxyModal')">Прокси</button>
+    <button class="menu-sub" type="button" onclick="openSettings('diskModal')">Место</button>
+    <button class="menu-sub" type="button" onclick="openSettings('cacheModal')">Очистка кэша</button>
+    <button class="menu-sub" type="button" onclick="openSettings('updateModal')">Обновление</button>
+    <div class="menu-label">Очистка</div>
+    <button class="menu-sub text-danger" type="button" onclick="cleanupOrphans()">Убрать каталоги без зеркал…</button>
+    <button class="menu-sub" type="button" onclick="cleanupAptly()">Почистить пул…</button>
+    <div class="app-version">
+        <div>{{ version }}</div>
+        <div class="dev-by">Development by <a href="https://github.com/MrKus1" target="_blank" rel="noopener">NikitaVM</a></div>
     </div>
-    <div class="app-version">{{ version }}</div>
 </aside>

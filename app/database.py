@@ -3,6 +3,7 @@ from sqlalchemy.ext.asyncio import create_async_engine, AsyncSession, async_sess
 from sqlalchemy.orm import DeclarativeBase
 
 from app.config import settings
+from app.guards import fk_needs_rebuild
 
 engine = create_async_engine(
     settings.DATABASE_URL,
@@ -43,8 +44,13 @@ async def init_db():
         await conn.execute(text(
             "CREATE INDEX IF NOT EXISTS ix_sync_logs_mirror_id ON sync_logs (mirror_id)"
         ))
-        await conn.execute(text("ALTER TABLE sync_logs DROP CONSTRAINT IF EXISTS sync_logs_mirror_id_fkey"))
-        await conn.execute(text(
-            "ALTER TABLE sync_logs ADD CONSTRAINT sync_logs_mirror_id_fkey "
-            "FOREIGN KEY (mirror_id) REFERENCES mirrors(id) ON DELETE CASCADE"
+        row = await conn.execute(text(
+            "SELECT pg_get_constraintdef(oid) FROM pg_constraint "
+            "WHERE conname = 'sync_logs_mirror_id_fkey'"
         ))
+        if fk_needs_rebuild(row.scalar()):
+            await conn.execute(text("ALTER TABLE sync_logs DROP CONSTRAINT IF EXISTS sync_logs_mirror_id_fkey"))
+            await conn.execute(text(
+                "ALTER TABLE sync_logs ADD CONSTRAINT sync_logs_mirror_id_fkey "
+                "FOREIGN KEY (mirror_id) REFERENCES mirrors(id) ON DELETE CASCADE"
+            ))
